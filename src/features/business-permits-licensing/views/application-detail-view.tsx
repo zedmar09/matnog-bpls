@@ -19,21 +19,31 @@ import {
   FileQuestion,
   FileText,
   MapPin,
+  MessageSquareText,
   ReceiptText,
+  RotateCcw,
+  Save,
   ShieldCheck,
 } from "lucide-react";
+
+import { ConfirmationDialog } from "@/shared/components/confirmation-dialog";
 
 import styles from "../components/application-detail.module.css";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
-import type { ApplicationGateStatus } from "../types/application-detail";
+import type { ApplicationGateStatus, BploReviewAction, BploReviewOverride } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
 import {
+  applyBploDecision,
+  BPLO_REVIEW_ACTOR,
+  BPLO_REVIEW_STORAGE_KEY,
   createApplicationRequirements,
   createApplicationTimeline,
   createOfficeReviews,
   createProcessingGates,
+  mergeBploReviewOverrides,
   resolveApplicationRecord,
+  validateBploDecision,
 } from "../utils/application-detail-utils";
 import { SAVED_APPLICATIONS_STORAGE_KEY } from "../utils/application-wizard-utils";
 import { mergeBusinessRecords, REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
@@ -83,6 +93,12 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [record, setRecord] = useState<ApplicationDirectoryRecord | undefined>(seededRecord);
   const [businesses, setBusinesses] = useState(() => [...MATNOG_BUSINESS_DIRECTORY]);
   const [loaded, setLoaded] = useState(Boolean(seededRecord));
+  const [bploOverride, setBploOverride] = useState<BploReviewOverride>();
+  const [remarks, setRemarks] = useState("");
+  const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
+  const [formError, setFormError] = useState("");
+  const [pendingAction, setPendingAction] = useState<Exclude<BploReviewAction, "note"> | null>(null);
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     try {
@@ -90,6 +106,13 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]",
       ) as ApplicationDirectoryRecord[];
       setRecord(resolveApplicationRecord(MATNOG_APPLICATION_DIRECTORY, savedApplications, applicationId));
+      const reviewOverrides = JSON.parse(
+        window.localStorage.getItem(BPLO_REVIEW_STORAGE_KEY) ?? "[]",
+      ) as BploReviewOverride[];
+      const currentOverride = reviewOverrides.find((item) => item.applicationId === applicationId.toUpperCase());
+      setBploOverride(currentOverride);
+      setRemarks(currentOverride?.remarks ?? "");
+      setAffectedRequirementIds(currentOverride?.affectedRequirementIds ?? []);
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -100,13 +123,70 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   }, [applicationId]);
 
   const business = businesses.find((item) => item.id === record?.businessId);
-  const requirements = useMemo(() => (record ? createApplicationRequirements(record) : []), [record]);
-  const reviews = useMemo(() => (record ? createOfficeReviews(record) : []), [record]);
+  const requirements = useMemo(
+    () => (record ? createApplicationRequirements(record, bploOverride) : []),
+    [record, bploOverride],
+  );
+  const reviews = useMemo(() => (record ? createOfficeReviews(record, bploOverride) : []), [record, bploOverride]);
   const gates = useMemo(
     () => (record ? createProcessingGates(record, requirements, reviews) : []),
     [record, requirements, reviews],
   );
-  const timeline = useMemo(() => (record ? createApplicationTimeline(record) : []), [record]);
+  const timeline = useMemo(
+    () => (record ? createApplicationTimeline(record, bploOverride) : []),
+    [record, bploOverride],
+  );
+
+  function requestDecision(action: BploReviewAction) {
+    const error = validateBploDecision(action, remarks, affectedRequirementIds);
+    if (error) {
+      setFormError(error);
+      return;
+    }
+    setFormError("");
+    if (action === "note") commitDecision(action);
+    else setPendingAction(action);
+  }
+
+  function commitDecision(action: BploReviewAction) {
+    if (!record) return;
+    const result = applyBploDecision(record, bploOverride, action, remarks, affectedRequirementIds);
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let reviewOverrides: BploReviewOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      reviewOverrides = JSON.parse(window.localStorage.getItem(BPLO_REVIEW_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      reviewOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      BPLO_REVIEW_STORAGE_KEY,
+      JSON.stringify(mergeBploReviewOverrides(reviewOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setBploOverride(result.override);
+    setPendingAction(null);
+    setFormError("");
+    setNotice(
+      action === "approve"
+        ? "BPLO completeness review approved and routed to Zoning."
+        : action === "return"
+          ? "Application returned for correction."
+          : "Internal note saved to the audit trail.",
+    );
+  }
+
+  function toggleRequirement(id: string) {
+    setAffectedRequirementIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+    setFormError("");
+  }
 
   if (!loaded)
     return (
@@ -140,12 +220,17 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
 
   return (
     <main className={styles.page}>
+      {notice ? (
+        <div className={styles.savedNotice} role="status">
+          <CheckCircle2 size={15} /> {notice}
+        </div>
+      ) : null}
       <div className={styles.topActions}>
         <Link className={styles.secondaryButton} href="/applications">
           <ArrowLeft size={14} /> Applications
         </Link>
-        <div className={styles.readOnlyNotice}>
-          <ShieldCheck size={14} /> Review workspace · read-only
+        <div className={styles.activeReviewNotice}>
+          <ShieldCheck size={14} /> BPLO review active · {BPLO_REVIEW_ACTOR}
         </div>
       </div>
 
@@ -317,7 +402,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             </header>
             <div className={styles.reviewGrid}>
               {reviews.map((review, index) => (
-                <article key={review.id}>
+                <article className={index === 0 ? styles.activeReviewCard : ""} key={review.id}>
                   <div className={styles.reviewTop}>
                     <span className={styles.reviewNumber}>{String(index + 1).padStart(2, "0")}</span>
                     <StatusBadge value={review.status} />
@@ -338,6 +423,59 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                       <dd>{formatDate(review.completedAt, true)}</dd>
                     </div>
                   </dl>
+                  {index === 0 && !["Issued", "Closed"].includes(record.status) ? (
+                    <div className={styles.reviewActions}>
+                      <div className={styles.reviewActionHeading}>
+                        <MessageSquareText size={14} />
+                        <span>
+                          <strong>BPLO decision and remarks</strong>
+                          <small>Only the active BPLO review is editable in this phase.</small>
+                        </span>
+                      </div>
+                      <label className={styles.remarksField}>
+                        <span>Review remarks</span>
+                        <textarea
+                          value={remarks}
+                          placeholder="Record findings, endorsement notes, or the correction reason…"
+                          onChange={(event) => {
+                            setRemarks(event.target.value);
+                            setFormError("");
+                          }}
+                        />
+                      </label>
+                      <fieldset className={styles.affectedRequirements}>
+                        <legend>Affected requirements for correction return</legend>
+                        <div>
+                          {requirements.map((item) => (
+                            <label key={item.id}>
+                              <input
+                                type="checkbox"
+                                checked={affectedRequirementIds.includes(item.id)}
+                                onChange={() => toggleRequirement(item.id)}
+                              />
+                              <span>{item.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                      {formError ? <p className={styles.formError}>{formError}</p> : null}
+                      <div className={styles.reviewButtons}>
+                        <button type="button" className={styles.noteButton} onClick={() => requestDecision("note")}>
+                          <Save size={13} /> Save internal note
+                        </button>
+                        <button type="button" className={styles.returnButton} onClick={() => requestDecision("return")}>
+                          <RotateCcw size={13} /> Return for correction
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.approveButton}
+                          onClick={() => requestDecision("approve")}
+                        >
+                          <CheckCircle2 size={13} /> Approve completeness
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -482,6 +620,23 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           </section>
         </aside>
       </div>
+      <ConfirmationDialog
+        open={Boolean(pendingAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingAction(null);
+        }}
+        title={pendingAction === "approve" ? "Approve BPLO completeness review?" : "Return application for correction?"}
+        description={
+          pendingAction === "approve"
+            ? "This records BPLO approval, updates the application to Under review, and routes it to Zoning review."
+            : `This changes the application to For correction and returns ${affectedRequirementIds.length} selected ${affectedRequirementIds.length === 1 ? "requirement" : "requirements"} to the applicant.`
+        }
+        confirmLabel={pendingAction === "approve" ? "Approve and route" : "Return application"}
+        destructive={pendingAction === "return"}
+        onConfirm={() => {
+          if (pendingAction) commitDecision(pendingAction);
+        }}
+      />
     </main>
   );
 }

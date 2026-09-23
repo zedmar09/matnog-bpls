@@ -44,7 +44,8 @@
   background: #fff;
   color: #3f4759;
 }
-.readOnlyNotice {
+.readOnlyNotice,
+.activeReviewNotice {
   min-height: 34px;
   padding: 0 11px;
   display: flex;
@@ -54,6 +55,25 @@
   border-radius: 4px;
   background: #f4fbf7;
   color: #277454;
+  font-size: 9px;
+  font-weight: 600;
+}
+.activeReviewNotice {
+  border-color: #d9cdef;
+  background: #f6f2fc;
+  color: #6841c2;
+}
+.savedNotice {
+  max-width: 1600px;
+  min-height: 39px;
+  margin: 0 auto 10px;
+  padding: 0 13px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #bfe0d0;
+  background: #edf8f2;
+  color: #176f49;
   font-size: 9px;
   font-weight: 600;
 }
@@ -251,11 +271,15 @@
   display: grid;
   gap: 10px;
 }
+.primaryColumn {
+  min-width: 0;
+}
 .sideColumn {
   position: sticky;
   top: 68px;
 }
 .card {
+  min-width: 0;
   border: 1px solid #e0e3e9;
   background: #fff;
   box-shadow: 0 2px 8px rgb(20 25 38 / 3%);
@@ -340,6 +364,7 @@
   text-decoration: none;
 }
 .requirementTable {
+  max-width: 100%;
   overflow-x: auto;
 }
 .tableHead,
@@ -396,12 +421,19 @@
   gap: 8px;
 }
 .reviewGrid > article {
+  min-width: 0;
   min-height: 205px;
   padding: 13px;
   display: flex;
   flex-direction: column;
   border: 1px solid #e4e6eb;
   background: #fdfdfe;
+}
+.reviewGrid > .activeReviewCard {
+  min-height: auto;
+  grid-column: 1 / -1;
+  border-color: #d9cdef;
+  background: #fdfcff;
 }
 .reviewTop {
   display: flex;
@@ -439,6 +471,140 @@
 }
 .reviewGrid dd {
   text-align: right;
+}
+.activeReviewCard > dl {
+  margin-top: 12px;
+  grid-template-columns: repeat(3, 1fr);
+}
+.activeReviewCard > dl div {
+  display: block;
+}
+.activeReviewCard > dl dd {
+  margin-top: 2px;
+  text-align: left;
+}
+.reviewActions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e0f1;
+}
+.reviewActionHeading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #7047d7;
+}
+.reviewActionHeading span,
+.reviewActionHeading strong,
+.reviewActionHeading small {
+  display: block;
+}
+.reviewActionHeading strong {
+  color: #30384a;
+  font-size: 9px;
+}
+.reviewActionHeading small {
+  margin-top: 2px;
+  color: #8b91a0;
+  font-size: 7px;
+}
+.remarksField {
+  margin-top: 12px;
+  display: grid;
+  gap: 5px;
+}
+.remarksField > span,
+.affectedRequirements legend {
+  color: #646c7e;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.remarksField textarea {
+  min-height: 72px;
+  padding: 9px 10px;
+  resize: vertical;
+  border: 1px solid #dce0e8;
+  border-radius: 4px;
+  outline: 0;
+  background: #fff;
+  color: #30384a;
+  font: inherit;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.remarksField textarea:focus {
+  border-color: #8668d5;
+  box-shadow: 0 0 0 3px rgb(112 71 215 / 9%);
+}
+.affectedRequirements {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+.affectedRequirements > div {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+.affectedRequirements label {
+  min-height: 32px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e3e5ea;
+  background: #fff;
+  color: #596174;
+  font-size: 7px;
+  cursor: pointer;
+}
+.affectedRequirements input {
+  margin: 0;
+  accent-color: #7047d7;
+}
+.formError {
+  min-height: auto !important;
+  margin-top: 8px !important;
+  color: #b23e49 !important;
+  font-size: 8px !important;
+  font-weight: 600;
+}
+.reviewButtons {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.reviewButtons button {
+  min-height: 34px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.noteButton {
+  border-color: #dce0e8 !important;
+  background: #fff;
+  color: #545d70;
+}
+.returnButton {
+  border-color: #efc9cc !important;
+  background: #fff5f5;
+  color: #ae3d47;
+}
+.approveButton {
+  background: #7047d7;
+  color: #fff;
 }
 .timeline {
   margin: 0;
@@ -717,6 +883,9 @@
   .reviewGrid {
     grid-template-columns: 1fr 1fr;
   }
+  .affectedRequirements > div {
+    grid-template-columns: 1fr 1fr;
+  }
   .sideColumn {
     grid-template-columns: 1fr;
   }
@@ -726,7 +895,8 @@
 }
 
 @media (max-width: 520px) {
-  .readOnlyNotice {
+  .readOnlyNotice,
+  .activeReviewNotice {
     font-size: 7px;
   }
   .applicationHero {
@@ -746,8 +916,18 @@
   }
   .factGrid,
   .reviewGrid,
-  .sideColumn .factGrid {
+  .sideColumn .factGrid,
+  .affectedRequirements > div {
     grid-template-columns: 1fr;
+  }
+  .activeReviewCard > dl {
+    grid-template-columns: 1fr;
+  }
+  .reviewButtons {
+    flex-direction: column;
+  }
+  .reviewButtons button {
+    width: 100%;
   }
   .businessStrip {
     grid-template-columns: auto 1fr;

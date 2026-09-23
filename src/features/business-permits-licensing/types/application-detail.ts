@@ -1,6 +1,7 @@
 export type ApplicationRequirementStatus = "Verified" | "Pending review" | "Missing" | "Returned";
 export type ApplicationReviewStatus = "Approved" | "In review" | "Not started" | "For correction" | "Not applicable";
 export type ApplicationGateStatus = "Complete" | "In progress" | "Blocked" | "Pending";
+export type BploReviewAction = "approve" | "return" | "note";
 
 export type ApplicationRequirementDetail = {
   id: string;
@@ -37,4 +38,21 @@ export type ApplicationTimelineEvent = {
   actor: string;
   office: string;
   occurredAt: string;
+};
+
+export type BploReviewOverride = {
+  applicationId: string;
+  sourceStatus: import("./application-directory").ApplicationDirectoryStatus;
+  status: ApplicationReviewStatus;
+  remarks: string;
+  affectedRequirementIds: string[];
+  actor: string;
+  updatedAt: string;
+  events: ApplicationTimelineEvent[];
+};
+
+export type BploDecisionResult = {
+  record: import("./application-directory").ApplicationDirectoryRecord;
+  override: BploReviewOverride;
+  event: ApplicationTimelineEvent;
 };

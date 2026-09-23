@@ -4,6 +4,9 @@ import type {
   ApplicationRequirementDetail,
   ApplicationReviewStatus,
   ApplicationTimelineEvent,
+  BploDecisionResult,
+  BploReviewAction,
+  BploReviewOverride,
 } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
 
@@ -28,6 +31,9 @@ const REVIEW_OFFICES = [
   ["Mayor's final approval", "Roberto P. Hababag"],
 ] as const;
 
+export const BPLO_REVIEW_STORAGE_KEY = "matnog-bpls-bplo-review-overrides-v1";
+export const BPLO_REVIEW_ACTOR = "Maricel A. Gacosta";
+
 function sequence(record: ApplicationDirectoryRecord) {
   const digits = Number(record.id.replace(/\D/g, "").slice(-5));
   return Number.isFinite(digits) ? digits : 1;
@@ -44,7 +50,10 @@ export function resolveApplicationRecord(
   );
 }
 
-export function createApplicationRequirements(record: ApplicationDirectoryRecord): ApplicationRequirementDetail[] {
+export function createApplicationRequirements(
+  record: ApplicationDirectoryRecord,
+  override?: BploReviewOverride,
+): ApplicationRequirementDetail[] {
   const seed = sequence(record);
   const total = Math.min(REQUIREMENTS.length, Math.max(1, record.requirementsTotal));
   return REQUIREMENTS.slice(0, total).map(([name, office, expires], index) => {
@@ -53,7 +62,13 @@ export function createApplicationRequirements(record: ApplicationDirectoryRecord
     else if (record.status === "Draft" && index === record.requirementsComplete - 1) status = "Pending review";
     else if (record.status === "Submitted" && index >= Math.max(0, record.requirementsComplete - 2))
       status = "Pending review";
-    else if (record.status === "For correction" && index === record.requirementsComplete - 1) status = "Returned";
+    else if (!override && record.status === "For correction" && index === record.requirementsComplete - 1)
+      status = "Returned";
+    if (
+      override?.status === "For correction" &&
+      override.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
+    )
+      status = "Returned";
     return {
       id: `REQ-${record.id.slice(-5)}-${index + 1}`,
       name,
@@ -86,26 +101,42 @@ function reviewStatuses(record: ApplicationDirectoryRecord): ApplicationReviewSt
   );
 }
 
-export function createOfficeReviews(record: ApplicationDirectoryRecord): ApplicationOfficeReview[] {
-  const statuses = reviewStatuses(record);
+export function createOfficeReviews(
+  record: ApplicationDirectoryRecord,
+  override?: BploReviewOverride,
+): ApplicationOfficeReview[] {
+  const statuses: ApplicationReviewStatus[] = override
+    ? override.status === "Approved"
+      ? ["Approved", "In review", "Not started", "Not started", "Not started", "Not started"]
+      : override.status === "For correction"
+        ? ["For correction", "Not started", "Not started", "Not started", "Not started", "Not started"]
+        : reviewStatuses(record)
+    : reviewStatuses(record);
   const seed = sequence(record);
   return REVIEW_OFFICES.map(([office, assignee], index) => {
-    const status = statuses[index];
+    const status = index === 0 && override ? override.status : statuses[index];
     return {
       id: `REV-${record.id.slice(-5)}-${index + 1}`,
       office,
       assignee,
       status,
       receivedAt: status === "Not started" ? "" : `2026-09-${String(11 + ((seed + index) % 9)).padStart(2, "0")} 09:15`,
-      completedAt: status === "Approved" ? `2026-09-${String(12 + ((seed + index) % 9)).padStart(2, "0")} 14:30` : "",
-      remarks:
+      completedAt:
         status === "Approved"
-          ? "Review completed; no unresolved findings recorded."
-          : status === "For correction"
-            ? "Updated supporting evidence is required before review can resume."
-            : status === "In review"
-              ? "Assigned office is validating the submitted application packet."
-              : "Waiting for the preceding processing gate.",
+          ? index === 0 && override
+            ? override.updatedAt
+            : `2026-09-${String(12 + ((seed + index) % 9)).padStart(2, "0")} 14:30`
+          : "",
+      remarks:
+        index === 0 && override
+          ? override.remarks
+          : status === "Approved"
+            ? "Review completed; no unresolved findings recorded."
+            : status === "For correction"
+              ? "Updated supporting evidence is required before review can resume."
+              : status === "In review"
+                ? "Assigned office is validating the submitted application packet."
+                : "Waiting for the preceding processing gate.",
     };
   });
 }
@@ -161,7 +192,10 @@ export function createProcessingGates(
   ];
 }
 
-export function createApplicationTimeline(record: ApplicationDirectoryRecord): ApplicationTimelineEvent[] {
+export function createApplicationTimeline(
+  record: ApplicationDirectoryRecord,
+  override?: BploReviewOverride,
+): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
     [
@@ -200,7 +234,10 @@ export function createApplicationTimeline(record: ApplicationDirectoryRecord): A
   ] as const;
   const count =
     record.status === "Draft" ? 2 : record.status === "Submitted" ? 3 : record.status === "For correction" ? 5 : 8;
-  return events.slice(0, count).map(([action, detail, actor, office], index) => ({
+  const sourceStatus = override?.sourceStatus ?? record.status;
+  if (override && sourceStatus !== record.status)
+    return [...createApplicationTimeline({ ...record, status: sourceStatus }), ...override.events];
+  const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
     id: `EVT-${record.id.slice(-5)}-${index + 1}`,
     action,
     detail,
@@ -211,4 +248,89 @@ export function createApplicationTimeline(record: ApplicationDirectoryRecord): A
         ? record.filedAt
         : `2026-09-${String(12 + ((seed + index) % 10)).padStart(2, "0")} ${String(9 + (index % 7)).padStart(2, "0")}:${index % 2 ? "40" : "15"}`,
   }));
+  return override ? [...generated, ...override.events] : generated;
+}
+
+export function validateBploDecision(
+  action: BploReviewAction,
+  remarks: string,
+  affectedRequirementIds: readonly string[],
+) {
+  if (action === "return" && remarks.trim().length < 10) return "Enter a correction reason of at least 10 characters.";
+  if (action === "return" && affectedRequirementIds.length === 0) return "Select at least one affected requirement.";
+  if (action === "note" && remarks.trim().length < 3) return "Enter an internal note.";
+  return "";
+}
+
+export function applyBploDecision(
+  record: ApplicationDirectoryRecord,
+  current: BploReviewOverride | undefined,
+  action: BploReviewAction,
+  remarks: string,
+  affectedRequirementIds: string[],
+  occurredAt = "2026-09-23 16:45",
+): BploDecisionResult {
+  const normalizedRemarks = remarks.trim();
+  const status =
+    action === "approve" ? "Approved" : action === "return" ? "For correction" : (current?.status ?? "In review");
+  const label =
+    action === "approve"
+      ? "BPLO completeness review approved"
+      : action === "return"
+        ? "BPLO review returned for correction"
+        : "BPLO internal note added";
+  const detail =
+    action === "approve"
+      ? normalizedRemarks || "Completeness requirements approved and application routed to zoning review."
+      : action === "return"
+        ? `${normalizedRemarks} (${affectedRequirementIds.length} affected ${affectedRequirementIds.length === 1 ? "requirement" : "requirements"}).`
+        : normalizedRemarks;
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-BPLO-${(current?.events.length ?? 0) + 1}`,
+    action: label,
+    detail,
+    actor: BPLO_REVIEW_ACTOR,
+    office: "BPLO",
+    occurredAt,
+  };
+  const override: BploReviewOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    status,
+    remarks:
+      normalizedRemarks ||
+      (action === "approve" ? "Completeness review approved; no unresolved findings." : (current?.remarks ?? "")),
+    affectedRequirementIds:
+      action === "return"
+        ? [...affectedRequirementIds]
+        : action === "approve"
+          ? []
+          : (current?.affectedRequirementIds ?? []),
+    actor: BPLO_REVIEW_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const updatedRecord: ApplicationDirectoryRecord =
+    action === "approve"
+      ? {
+          ...record,
+          status: "Under review",
+          currentStage: "Zoning review",
+          assignedOfficer: BPLO_REVIEW_ACTOR,
+          updatedAt: occurredAt,
+        }
+      : action === "return"
+        ? {
+            ...record,
+            status: "For correction",
+            currentStage: "Data validation",
+            assignedOfficer: BPLO_REVIEW_ACTOR,
+            updatedAt: occurredAt,
+          }
+        : { ...record, updatedAt: occurredAt };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergeBploReviewOverrides(overrides: readonly BploReviewOverride[], next: BploReviewOverride) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
 }

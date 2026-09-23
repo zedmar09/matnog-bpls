@@ -74,7 +74,7 @@ export function BusinessDirectoryWireframeView() {
                 </Link>
               </Button>
               <Button asChild variant="outline">
-                <Link href="/business/applications/new?type=renewal">Map renewal path</Link>
+                <Link href="/applications/new?type=renewal">Map renewal path</Link>
               </Button>
             </div>
           </ContentPanel>

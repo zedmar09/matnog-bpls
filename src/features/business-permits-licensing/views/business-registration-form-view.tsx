@@ -300,10 +300,7 @@ export function BusinessRegistrationFormView({ businessId }: { businessId?: stri
             <small>Permit status: For application</small>
           </div>
           <div className={styles.successActions}>
-            <Link
-              className={styles.primaryButton}
-              href={`/business/applications/new?type=new&businessId=${created.id}`}
-            >
+            <Link className={styles.primaryButton} href={`/applications/new?type=new&businessId=${created.id}`}>
               Start permit application <ChevronRight size={15} />
             </Link>
             <Link className={styles.secondaryButton} href="/businesses">

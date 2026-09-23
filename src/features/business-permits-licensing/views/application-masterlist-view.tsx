@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import Link from "next/link";
 
@@ -42,6 +42,7 @@ import {
   isApplicationOverdue,
   sortApplications,
 } from "../utils/application-directory-utils";
+import { mergeApplicationRecords, SAVED_APPLICATIONS_STORAGE_KEY } from "../utils/application-wizard-utils";
 
 const columns = [
   "id",
@@ -151,6 +152,15 @@ export function ApplicationMasterlistView() {
   const [pageSize, setPageSize] = useState(25);
   const [openAction, setOpenAction] = useState<string | null>(null);
 
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      setRecords(mergeApplicationRecords(MATNOG_APPLICATION_DIRECTORY, saved));
+    } catch {
+      window.localStorage.removeItem(SAVED_APPLICATIONS_STORAGE_KEY);
+    }
+  }, []);
+
   const filtered = useMemo(
     () => sortApplications(filterApplications(records, filters), sortKey, direction),
     [records, filters, sortKey, direction],
@@ -229,7 +239,7 @@ export function ApplicationMasterlistView() {
           <h1>Business Applications</h1>
           <p>Manage registrations, renewals, amendments, and closures from filing through permit issuance.</p>
         </div>
-        <Link className={styles.primaryButton} href="/business/applications/new">
+        <Link className={styles.primaryButton} href="/applications/new">
           <FilePlus2 size={15} /> New application
         </Link>
       </header>

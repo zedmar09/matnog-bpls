@@ -144,10 +144,7 @@ export function BusinessProfileView({ businessId }: { businessId: string }) {
           <Link className={styles.secondaryButton} href={`/businesses/${record.id}/edit`}>
             <Pencil size={14} /> Edit business
           </Link>
-          <Link
-            className={styles.primaryButton}
-            href={`/business/applications/new?type=${permitType}&businessId=${record.id}`}
-          >
+          <Link className={styles.primaryButton} href={`/applications/new?type=${permitType}&businessId=${record.id}`}>
             <Plus size={14} /> {permitAction}
           </Link>
         </div>
@@ -464,7 +461,7 @@ export function BusinessProfileView({ businessId }: { businessId: string }) {
                 </div>
                 <Link
                   className={styles.primaryButton}
-                  href={`/business/applications/new?type=${permitType}&businessId=${record.id}`}
+                  href={`/applications/new?type=${permitType}&businessId=${record.id}`}
                 >
                   <Plus size={14} /> {permitAction}
                 </Link>
@@ -517,10 +514,7 @@ export function BusinessProfileView({ businessId }: { businessId: string }) {
                   <ReceiptText size={30} />
                   <h2>No permit applications yet</h2>
                   <p>Start the first application for this registered business.</p>
-                  <Link
-                    className={styles.primaryButton}
-                    href={`/business/applications/new?type=new&businessId=${record.id}`}
-                  >
+                  <Link className={styles.primaryButton} href={`/applications/new?type=new&businessId=${record.id}`}>
                     Start permit application
                   </Link>
                 </div>

@@ -31,7 +31,7 @@ export function BusinessPathCards({ compact = false }: { compact?: boolean }) {
             </>
           )}
           <Button asChild variant="outline" className="mt-5 w-full sm:w-auto">
-            <Link href={`/business/applications/new?type=${path.id}`}>
+            <Link href={`/applications/new?type=${path.id}`}>
               Review this path <ArrowRight />
             </Link>
           </Button>

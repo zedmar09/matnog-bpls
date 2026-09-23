@@ -118,7 +118,7 @@ export function BusinessDetailWireframeView({ businessId }: { businessId: string
               </ul>
               <PanelDivider />
               <Button asChild className="w-full">
-                <Link href="/business/applications/new?type=renewal">Start mapped application</Link>
+                <Link href="/applications/new?type=renewal">Start mapped application</Link>
               </Button>
             </ContentPanel>
           </aside>

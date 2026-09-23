@@ -550,7 +550,7 @@ export function BusinessRegistryMasterlistView() {
                           <Link href={`/businesses/${business.id}/edit`}>
                             <Pencil size={14} /> Edit business
                           </Link>
-                          <Link href={`/business/applications/new?type=renewal&businessId=${business.id}`}>
+                          <Link href={`/applications/new?type=renewal&businessId=${business.id}`}>
                             <RefreshCw size={14} /> Start renewal
                           </Link>
                           <button

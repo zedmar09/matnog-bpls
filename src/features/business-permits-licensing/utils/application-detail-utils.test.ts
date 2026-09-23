@@ -1,6 +1,7 @@
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import {
   applyBploDecision,
+  applyFireDecision,
   applyHealthDecision,
   applyZoningDecision,
   createApplicationRequirements,
@@ -9,6 +10,7 @@ import {
   createProcessingGates,
   resolveApplicationRecord,
   validateBploDecision,
+  validateFireDecision,
   validateHealthDecision,
   validateZoningDecision,
 } from "./application-detail-utils";
@@ -159,4 +161,42 @@ test("health correction return requires a reason and selected requirement", () =
   assert.ok(validateHealthDecision("return", { ...completeHealthFields, remarks: "Short" }, []));
   assert.ok(validateHealthDecision("return", completeHealthFields, []));
   assert.equal(validateHealthDecision("return", completeHealthFields, ["REQ-1"]), "");
+});
+
+const completeFireFields = {
+  inspectionRequirement: "On-site inspection required",
+  scheduledDate: "2026-09-22",
+  inspectionDate: "2026-09-23",
+  inspectionResult: "Passed",
+  fsicNumber: "FSIC-2026-00318",
+  validUntil: "2027-09-23",
+  safetyControls: [
+    "Fire extinguishers",
+    "Emergency exits",
+    "Alarm and detection",
+    "Electrical safety",
+    "Emergency plan",
+  ],
+  remarks: "BFP inspection completed with all required fire-safety controls verified.",
+};
+
+test("fire approval advances the application to treasurer assessment", () => {
+  const record = { ...MATNOG_APPLICATION_DIRECTORY[0], status: "Under review" as const };
+  const result = applyFireDecision(record, undefined, "approve", completeFireFields, []);
+  assert.equal(result.record.status, "Under review");
+  assert.equal(result.record.currentStage, "Treasurer assessment");
+  assert.equal(result.record.assignedOfficer, "Rogelio M. Funes");
+  assert.equal(result.override.status, "Approved");
+});
+
+test("fire approval validates inspection chronology and controls", () => {
+  assert.ok(validateFireDecision("approve", { ...completeFireFields, inspectionDate: "2026-09-20" }, []));
+  assert.ok(validateFireDecision("approve", { ...completeFireFields, safetyControls: ["Fire extinguishers"] }, []));
+  assert.equal(validateFireDecision("approve", completeFireFields, []), "");
+});
+
+test("fire correction return requires a reason and selected requirement", () => {
+  assert.ok(validateFireDecision("return", { ...completeFireFields, remarks: "Short" }, []));
+  assert.ok(validateFireDecision("return", completeFireFields, []));
+  assert.equal(validateFireDecision("return", completeFireFields, ["REQ-1"]), "");
 });

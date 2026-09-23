@@ -19,6 +19,7 @@ import {
   FileCheck2,
   FileQuestion,
   FileText,
+  Flame,
   HeartPulse,
   MapPin,
   MapPinned,
@@ -32,6 +33,7 @@ import {
 import { ConfirmationDialog } from "@/shared/components/confirmation-dialog";
 
 import styles from "../components/application-detail.module.css";
+import { FireReviewActions, type FireReviewFields } from "../components/fire-review-actions";
 import { HealthReviewActions, type HealthReviewFields } from "../components/health-review-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
@@ -39,6 +41,8 @@ import type {
   ApplicationGateStatus,
   BploReviewAction,
   BploReviewOverride,
+  FireReviewAction,
+  FireReviewOverride,
   HealthReviewAction,
   HealthReviewOverride,
   ZoningReviewAction,
@@ -47,6 +51,7 @@ import type {
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
 import {
   applyBploDecision,
+  applyFireDecision,
   applyHealthDecision,
   applyZoningDecision,
   BPLO_REVIEW_ACTOR,
@@ -55,13 +60,17 @@ import {
   createApplicationTimeline,
   createOfficeReviews,
   createProcessingGates,
+  FIRE_REVIEW_ACTOR,
+  FIRE_REVIEW_STORAGE_KEY,
   HEALTH_REVIEW_ACTOR,
   HEALTH_REVIEW_STORAGE_KEY,
   mergeBploReviewOverrides,
+  mergeFireReviewOverrides,
   mergeHealthReviewOverrides,
   mergeZoningReviewOverrides,
   resolveApplicationRecord,
   validateBploDecision,
+  validateFireDecision,
   validateHealthDecision,
   validateZoningDecision,
   ZONING_REVIEW_ACTOR,
@@ -118,6 +127,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [bploOverride, setBploOverride] = useState<BploReviewOverride>();
   const [zoningOverride, setZoningOverride] = useState<ZoningReviewOverride>();
   const [healthOverride, setHealthOverride] = useState<HealthReviewOverride>();
+  const [fireOverride, setFireOverride] = useState<FireReviewOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -144,6 +154,19 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [healthAffectedRequirementIds, setHealthAffectedRequirementIds] = useState<string[]>([]);
   const [healthError, setHealthError] = useState("");
   const [pendingHealthAction, setPendingHealthAction] = useState<Exclude<HealthReviewAction, "note"> | null>(null);
+  const [fireFields, setFireFields] = useState<FireReviewFields>({
+    inspectionRequirement: "",
+    scheduledDate: "",
+    inspectionDate: "",
+    inspectionResult: "",
+    fsicNumber: "",
+    validUntil: "",
+    safetyControls: [],
+    remarks: "",
+  });
+  const [fireAffectedRequirementIds, setFireAffectedRequirementIds] = useState<string[]>([]);
+  const [fireError, setFireError] = useState("");
+  const [pendingFireAction, setPendingFireAction] = useState<Exclude<FireReviewAction, "note"> | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -191,6 +214,24 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         });
         setHealthAffectedRequirementIds(currentHealthOverride.affectedRequirementIds);
       }
+      const fireOverrides = JSON.parse(
+        window.localStorage.getItem(FIRE_REVIEW_STORAGE_KEY) ?? "[]",
+      ) as FireReviewOverride[];
+      const currentFireOverride = fireOverrides.find((item) => item.applicationId === applicationId.toUpperCase());
+      setFireOverride(currentFireOverride);
+      if (currentFireOverride) {
+        setFireFields({
+          inspectionRequirement: currentFireOverride.inspectionRequirement,
+          scheduledDate: currentFireOverride.scheduledDate,
+          inspectionDate: currentFireOverride.inspectionDate,
+          inspectionResult: currentFireOverride.inspectionResult,
+          fsicNumber: currentFireOverride.fsicNumber,
+          validUntil: currentFireOverride.validUntil,
+          safetyControls: currentFireOverride.safetyControls,
+          remarks: currentFireOverride.remarks,
+        });
+        setFireAffectedRequirementIds(currentFireOverride.affectedRequirementIds);
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -202,20 +243,21 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
 
   const business = businesses.find((item) => item.id === record?.businessId);
   const requirements = useMemo(
-    () => (record ? createApplicationRequirements(record, bploOverride, zoningOverride, healthOverride) : []),
-    [record, bploOverride, zoningOverride, healthOverride],
+    () =>
+      record ? createApplicationRequirements(record, bploOverride, zoningOverride, healthOverride, fireOverride) : [],
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride],
   );
   const reviews = useMemo(
-    () => (record ? createOfficeReviews(record, bploOverride, zoningOverride, healthOverride) : []),
-    [record, bploOverride, zoningOverride, healthOverride],
+    () => (record ? createOfficeReviews(record, bploOverride, zoningOverride, healthOverride, fireOverride) : []),
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride],
   );
   const gates = useMemo(
     () => (record ? createProcessingGates(record, requirements, reviews) : []),
     [record, requirements, reviews],
   );
   const timeline = useMemo(
-    () => (record ? createApplicationTimeline(record, bploOverride, zoningOverride, healthOverride) : []),
-    [record, bploOverride, zoningOverride, healthOverride],
+    () => (record ? createApplicationTimeline(record, bploOverride, zoningOverride, healthOverride, fireOverride) : []),
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride],
   );
 
   function requestDecision(action: BploReviewAction) {
@@ -395,6 +437,74 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     );
   }
 
+  function updateFireField<K extends keyof FireReviewFields>(field: K, value: FireReviewFields[K]) {
+    setFireFields((current) => ({ ...current, [field]: value }));
+    setFireError("");
+  }
+
+  function toggleFireControl(control: string) {
+    setFireFields((current) => ({
+      ...current,
+      safetyControls: current.safetyControls.includes(control)
+        ? current.safetyControls.filter((item) => item !== control)
+        : [...current.safetyControls, control],
+    }));
+    setFireError("");
+  }
+
+  function toggleFireRequirement(id: string) {
+    setFireAffectedRequirementIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+    setFireError("");
+  }
+
+  function requestFireDecision(action: FireReviewAction) {
+    const error = validateFireDecision(action, fireFields, fireAffectedRequirementIds);
+    if (error) {
+      setFireError(error);
+      return;
+    }
+    setFireError("");
+    if (action === "note") commitFireDecision(action);
+    else setPendingFireAction(action);
+  }
+
+  function commitFireDecision(action: FireReviewAction) {
+    if (!record) return;
+    const result = applyFireDecision(record, fireOverride, action, fireFields, fireAffectedRequirementIds);
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let fireOverrides: FireReviewOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      fireOverrides = JSON.parse(window.localStorage.getItem(FIRE_REVIEW_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      fireOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      FIRE_REVIEW_STORAGE_KEY,
+      JSON.stringify(mergeFireReviewOverrides(fireOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setFireOverride(result.override);
+    setPendingFireAction(null);
+    setFireError("");
+    setNotice(
+      action === "approve"
+        ? "Fire safety review approved and routed to Treasurer Assessment."
+        : action === "return"
+          ? "Fire safety review returned for correction."
+          : action === "not-applicable"
+            ? "Fire safety review marked not applicable and workflow advanced."
+            : "Fire safety internal note saved to the audit trail.",
+    );
+  }
+
   if (!loaded)
     return (
       <main className={styles.page}>
@@ -427,6 +537,10 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     !terminal &&
     ["Approved", "Not applicable"].includes(reviews[1]?.status) &&
     !["Approved", "Not applicable"].includes(reviews[2]?.status);
+  const fireReviewActive =
+    !terminal &&
+    ["Approved", "Not applicable"].includes(reviews[2]?.status) &&
+    !["Approved", "Not applicable"].includes(reviews[3]?.status);
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -445,20 +559,24 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          {healthReviewActive ? (
+          {fireReviewActive ? (
+            <Flame size={14} />
+          ) : healthReviewActive ? (
             <HeartPulse size={14} />
           ) : zoningReviewActive ? (
             <MapPinned size={14} />
           ) : (
             <ShieldCheck size={14} />
           )}
-          {healthReviewActive
-            ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
-            : zoningReviewActive
-              ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
-              : bploReviewActive
-                ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
-                : `Current office · ${record.assignedOfficer}`}
+          {fireReviewActive
+            ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
+            : healthReviewActive
+              ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
+              : zoningReviewActive
+                ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+                : bploReviewActive
+                  ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+                  : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -634,7 +752,8 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                   className={
                     (index === 0 && bploReviewActive) ||
                     (index === 1 && zoningReviewActive) ||
-                    (index === 2 && healthReviewActive)
+                    (index === 2 && healthReviewActive) ||
+                    (index === 3 && fireReviewActive)
                       ? styles.activeReviewCard
                       : ""
                   }
@@ -844,6 +963,18 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                       onToggleCompliance={toggleHealthCompliance}
                       onToggleRequirement={toggleHealthRequirement}
                       onAction={requestHealthDecision}
+                    />
+                  ) : null}
+                  {index === 3 && fireReviewActive ? (
+                    <FireReviewActions
+                      fields={fireFields}
+                      requirements={requirements}
+                      affectedRequirementIds={fireAffectedRequirementIds}
+                      error={fireError}
+                      onFieldChange={updateFireField}
+                      onToggleControl={toggleFireControl}
+                      onToggleRequirement={toggleFireRequirement}
+                      onAction={requestFireDecision}
                     />
                   ) : null}
                 </article>
@@ -1069,6 +1200,37 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         destructive={pendingHealthAction === "return"}
         onConfirm={() => {
           if (pendingHealthAction) commitHealthDecision(pendingHealthAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingFireAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingFireAction(null);
+        }}
+        title={
+          pendingFireAction === "approve"
+            ? "Approve fire safety review?"
+            : pendingFireAction === "not-applicable"
+              ? "Mark fire safety review as not applicable?"
+              : "Return fire safety review for correction?"
+        }
+        description={
+          pendingFireAction === "approve"
+            ? "This records the BFP inspection and FSIC details, then routes the application to Treasurer Assessment."
+            : pendingFireAction === "not-applicable"
+              ? "This records the exemption reason and routes the application to Treasurer Assessment."
+              : `This returns ${fireAffectedRequirementIds.length} selected ${fireAffectedRequirementIds.length === 1 ? "requirement" : "requirements"} to the applicant while keeping the case assigned to the Bureau of Fire Protection.`
+        }
+        confirmLabel={
+          pendingFireAction === "approve"
+            ? "Approve and route"
+            : pendingFireAction === "not-applicable"
+              ? "Confirm not applicable"
+              : "Return for correction"
+        }
+        destructive={pendingFireAction === "return"}
+        onConfirm={() => {
+          if (pendingFireAction) commitFireDecision(pendingFireAction);
         }}
       />
     </main>

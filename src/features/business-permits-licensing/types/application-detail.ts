@@ -4,6 +4,7 @@ export type ApplicationGateStatus = "Complete" | "In progress" | "Blocked" | "Pe
 export type BploReviewAction = "approve" | "return" | "note";
 export type ZoningReviewAction = "approve" | "return" | "not-applicable" | "note";
 export type HealthReviewAction = "approve" | "return" | "not-applicable" | "note";
+export type FireReviewAction = "approve" | "return" | "not-applicable" | "note";
 
 export type ApplicationRequirementDetail = {
   id: string;
@@ -100,5 +101,29 @@ export type HealthReviewOverride = {
 export type HealthDecisionResult = {
   record: import("./application-directory").ApplicationDirectoryRecord;
   override: HealthReviewOverride;
+  event: ApplicationTimelineEvent;
+};
+
+export type FireReviewOverride = {
+  applicationId: string;
+  sourceStatus: import("./application-directory").ApplicationDirectoryStatus;
+  status: ApplicationReviewStatus;
+  inspectionRequirement: string;
+  scheduledDate: string;
+  inspectionDate: string;
+  inspectionResult: string;
+  fsicNumber: string;
+  validUntil: string;
+  safetyControls: string[];
+  remarks: string;
+  affectedRequirementIds: string[];
+  actor: string;
+  updatedAt: string;
+  events: ApplicationTimelineEvent[];
+};
+
+export type FireDecisionResult = {
+  record: import("./application-directory").ApplicationDirectoryRecord;
+  override: FireReviewOverride;
   event: ApplicationTimelineEvent;
 };

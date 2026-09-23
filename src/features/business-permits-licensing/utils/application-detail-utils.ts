@@ -7,6 +7,9 @@ import type {
   BploDecisionResult,
   BploReviewAction,
   BploReviewOverride,
+  FireDecisionResult,
+  FireReviewAction,
+  FireReviewOverride,
   HealthDecisionResult,
   HealthReviewAction,
   HealthReviewOverride,
@@ -50,6 +53,15 @@ export const HEALTH_COMPLIANCE_AREAS = [
   "Food handling",
   "Employee health",
 ] as const;
+export const FIRE_REVIEW_STORAGE_KEY = "matnog-bpls-fire-review-overrides-v1";
+export const FIRE_REVIEW_ACTOR = "FO2 Catherine O. Fortes";
+export const FIRE_SAFETY_CONTROLS = [
+  "Fire extinguishers",
+  "Emergency exits",
+  "Alarm and detection",
+  "Electrical safety",
+  "Emergency plan",
+] as const;
 
 function sequence(record: ApplicationDirectoryRecord) {
   const digits = Number(record.id.replace(/\D/g, "").slice(-5));
@@ -72,6 +84,7 @@ export function createApplicationRequirements(
   override?: BploReviewOverride,
   zoningOverride?: ZoningReviewOverride,
   healthOverride?: HealthReviewOverride,
+  fireOverride?: FireReviewOverride,
 ): ApplicationRequirementDetail[] {
   const seed = sequence(record);
   const total = Math.min(REQUIREMENTS.length, Math.max(1, record.requirementsTotal));
@@ -96,6 +109,11 @@ export function createApplicationRequirements(
     if (
       healthOverride?.status === "For correction" &&
       healthOverride.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
+    )
+      status = "Returned";
+    if (
+      fireOverride?.status === "For correction" &&
+      fireOverride.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
     )
       status = "Returned";
     return {
@@ -135,6 +153,7 @@ export function createOfficeReviews(
   override?: BploReviewOverride,
   zoningOverride?: ZoningReviewOverride,
   healthOverride?: HealthReviewOverride,
+  fireOverride?: FireReviewOverride,
 ): ApplicationOfficeReview[] {
   let statuses: ApplicationReviewStatus[] = reviewStatuses(record);
   if (override?.status === "Approved")
@@ -156,10 +175,29 @@ export function createOfficeReviews(
       "Not started",
     ];
   }
+  if (fireOverride) {
+    const nextStatus = ["Approved", "Not applicable"].includes(fireOverride.status) ? "In review" : "Not started";
+    statuses = [
+      "Approved",
+      zoningOverride?.status === "Not applicable" ? "Not applicable" : "Approved",
+      healthOverride?.status === "Not applicable" ? "Not applicable" : "Approved",
+      fireOverride.status,
+      nextStatus,
+      "Not started",
+    ];
+  }
   const seed = sequence(record);
   return REVIEW_OFFICES.map(([office, assignee], index) => {
     const officeOverride =
-      index === 0 ? override : index === 1 ? zoningOverride : index === 2 ? healthOverride : undefined;
+      index === 0
+        ? override
+        : index === 1
+          ? zoningOverride
+          : index === 2
+            ? healthOverride
+            : index === 3
+              ? fireOverride
+              : undefined;
     const status = officeOverride?.status ?? statuses[index];
     return {
       id: `REV-${record.id.slice(-5)}-${index + 1}`,
@@ -242,6 +280,7 @@ export function createApplicationTimeline(
   override?: BploReviewOverride,
   zoningOverride?: ZoningReviewOverride,
   healthOverride?: HealthReviewOverride,
+  fireOverride?: FireReviewOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -284,7 +323,13 @@ export function createApplicationTimeline(
   const sourceStatus = override?.sourceStatus ?? record.status;
   if (override && sourceStatus !== record.status) {
     const base = createApplicationTimeline({ ...record, status: sourceStatus });
-    return [...base, ...override.events, ...(zoningOverride?.events ?? []), ...(healthOverride?.events ?? [])];
+    return [
+      ...base,
+      ...override.events,
+      ...(zoningOverride?.events ?? []),
+      ...(healthOverride?.events ?? []),
+      ...(fireOverride?.events ?? []),
+    ];
   }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
     id: `EVT-${record.id.slice(-5)}-${index + 1}`,
@@ -302,6 +347,7 @@ export function createApplicationTimeline(
     ...(override?.events ?? []),
     ...(zoningOverride?.events ?? []),
     ...(healthOverride?.events ?? []),
+    ...(fireOverride?.events ?? []),
   ];
 }
 
@@ -594,5 +640,124 @@ export function applyHealthDecision(
 }
 
 export function mergeHealthReviewOverrides(overrides: readonly HealthReviewOverride[], next: HealthReviewOverride) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+type FireDecisionFields = Pick<
+  FireReviewOverride,
+  | "inspectionRequirement"
+  | "scheduledDate"
+  | "inspectionDate"
+  | "inspectionResult"
+  | "fsicNumber"
+  | "validUntil"
+  | "safetyControls"
+  | "remarks"
+>;
+
+export function validateFireDecision(
+  action: FireReviewAction,
+  fields: FireDecisionFields,
+  affectedRequirementIds: readonly string[],
+) {
+  if (action === "note" && fields.remarks.trim().length < 3) return "Enter an internal fire review note.";
+  if (action === "return" && fields.remarks.trim().length < 10)
+    return "Enter a correction reason of at least 10 characters.";
+  if (action === "return" && affectedRequirementIds.length === 0) return "Select at least one affected requirement.";
+  if (action === "not-applicable" && fields.remarks.trim().length < 10)
+    return "Explain why fire safety review is not applicable.";
+  if (["approve", "not-applicable"].includes(action)) {
+    if (!fields.inspectionRequirement.trim()) return "Select a fire inspection requirement.";
+    if (fields.inspectionRequirement === "On-site inspection required" && !fields.scheduledDate)
+      return "Enter the scheduled fire inspection date.";
+    if (fields.inspectionRequirement === "On-site inspection required" && !fields.inspectionDate)
+      return "Enter the completed fire inspection date.";
+    if (fields.scheduledDate && fields.inspectionDate && fields.inspectionDate < fields.scheduledDate)
+      return "The completed inspection date cannot be earlier than the scheduled date.";
+    if (!fields.inspectionResult.trim()) return "Select a fire inspection result.";
+    if (!fields.fsicNumber.trim()) return "Enter the FSIC or BFP review reference.";
+    if (!fields.validUntil) return "Enter the FSIC validity date.";
+    if (fields.inspectionDate && fields.validUntil <= fields.inspectionDate)
+      return "The FSIC validity date must be after the inspection date.";
+  }
+  if (action === "approve" && fields.inspectionResult === "Failed")
+    return "A failed fire inspection cannot be approved. Return the application for correction.";
+  if (action === "approve" && fields.safetyControls.length !== FIRE_SAFETY_CONTROLS.length)
+    return "Verify every required fire-safety control before approval.";
+  return "";
+}
+
+export function applyFireDecision(
+  record: ApplicationDirectoryRecord,
+  current: FireReviewOverride | undefined,
+  action: FireReviewAction,
+  fields: FireDecisionFields,
+  affectedRequirementIds: string[],
+  occurredAt = "2026-09-23 18:40",
+): FireDecisionResult {
+  const status: ApplicationReviewStatus =
+    action === "approve"
+      ? "Approved"
+      : action === "return"
+        ? "For correction"
+        : action === "not-applicable"
+          ? "Not applicable"
+          : (current?.status ?? "In review");
+  const actionLabels: Record<FireReviewAction, string> = {
+    approve: "Fire safety review approved",
+    return: "Fire safety review returned for correction",
+    "not-applicable": "Fire safety review marked not applicable",
+    note: "Fire safety internal note added",
+  };
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-FIRE-${(current?.events.length ?? 0) + 1}`,
+    action: actionLabels[action],
+    detail:
+      action === "return"
+        ? `${fields.remarks.trim()} (${affectedRequirementIds.length} affected ${affectedRequirementIds.length === 1 ? "requirement" : "requirements"}).`
+        : fields.remarks.trim() || "Fire inspection completed with no unresolved safety deficiencies.",
+    actor: FIRE_REVIEW_ACTOR,
+    office: "Bureau of Fire Protection",
+    occurredAt,
+  };
+  const override: FireReviewOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    status,
+    inspectionRequirement: fields.inspectionRequirement.trim(),
+    scheduledDate: fields.scheduledDate,
+    inspectionDate: fields.inspectionDate,
+    inspectionResult: fields.inspectionResult.trim(),
+    fsicNumber: fields.fsicNumber.trim(),
+    validUntil: fields.validUntil,
+    safetyControls: [...fields.safetyControls],
+    remarks: fields.remarks.trim() || current?.remarks || "Fire safety review completed without findings.",
+    affectedRequirementIds: action === "return" ? [...affectedRequirementIds] : [],
+    actor: FIRE_REVIEW_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const completed = action === "approve" || action === "not-applicable";
+  const updatedRecord: ApplicationDirectoryRecord = completed
+    ? {
+        ...record,
+        status: "Under review",
+        currentStage: "Treasurer assessment",
+        assignedOfficer: "Rogelio M. Funes",
+        updatedAt: occurredAt,
+      }
+    : action === "return"
+      ? {
+          ...record,
+          status: "For correction",
+          currentStage: "Fire safety review",
+          assignedOfficer: FIRE_REVIEW_ACTOR,
+          updatedAt: occurredAt,
+        }
+      : { ...record, updatedAt: occurredAt };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergeFireReviewOverrides(overrides: readonly FireReviewOverride[], next: FireReviewOverride) {
   return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
 }

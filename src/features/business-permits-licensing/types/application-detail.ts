@@ -10,6 +10,9 @@ export type PaymentConfirmationAction = "save" | "confirm" | "reject";
 export type MayorReviewAction = "approve" | "return" | "defer";
 export type PermitDocumentAction = "save" | "generate";
 export type PermitDocumentStatus = "Draft" | "For signature" | "Invalidated";
+export type PermitReleaseAction = "send" | "signed" | "declined" | "failed" | "release";
+export type PermitSignatureStatus = "Pending" | "Sent" | "Signed" | "Declined" | "Failed";
+export type PermitReleaseStatus = "Not released" | "Ready for release" | "Released";
 export type PaymentTransactionStatus = "Confirmed" | "Rejected" | "Reversed";
 
 export type AssessmentFeeItem = {
@@ -275,5 +278,52 @@ export type PermitDocumentOverride = {
 export type PermitDocumentResult = {
   record: import("./application-directory").ApplicationDirectoryRecord;
   override: PermitDocumentOverride;
+  event: ApplicationTimelineEvent;
+};
+
+export type PermitSignatureAttempt = {
+  id: string;
+  provider: string;
+  envelopeReference: string;
+  signerEmail: string;
+  status: PermitSignatureStatus;
+  sentAt: string;
+  completedAt: string;
+  notes: string;
+};
+
+export type PermitReleaseOverride = {
+  applicationId: string;
+  sourceStatus: import("./application-directory").ApplicationDirectoryStatus;
+  documentNumber: string;
+  documentVersion: number;
+  qrToken: string;
+  signatureStatus: PermitSignatureStatus;
+  releaseStatus: PermitReleaseStatus;
+  provider: string;
+  envelopeReference: string;
+  signerEmail: string;
+  sentDate: string;
+  signedDate: string;
+  signatureNotes: string;
+  attempts: PermitSignatureAttempt[];
+  releaseChannel: string;
+  releaseDate: string;
+  recipientName: string;
+  recipientIdentification: string;
+  recipientContact: string;
+  releasingOfficer: string;
+  acknowledgmentReference: string;
+  acknowledgmentConfirmed: boolean;
+  releaseNotes: string;
+  verificationStatus: "Pending" | "Active";
+  actor: string;
+  updatedAt: string;
+  events: ApplicationTimelineEvent[];
+};
+
+export type PermitReleaseResult = {
+  record: import("./application-directory").ApplicationDirectoryRecord;
+  override: PermitReleaseOverride;
   event: ApplicationTimelineEvent;
 };

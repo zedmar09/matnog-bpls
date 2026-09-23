@@ -24,6 +24,10 @@ import type {
   PermitDocumentAction,
   PermitDocumentOverride,
   PermitDocumentResult,
+  PermitReleaseAction,
+  PermitReleaseOverride,
+  PermitReleaseResult,
+  PermitSignatureAttempt,
   TreasurerAssessmentAction,
   TreasurerAssessmentOverride,
   TreasurerAssessmentResult,
@@ -32,6 +36,7 @@ import type {
   ZoningReviewOverride,
 } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
+import type { BusinessDirectoryRecord } from "../types/business-directory";
 
 const REQUIREMENTS = [
   ["DTI / SEC / CDA registration", "BPLO", false],
@@ -85,6 +90,8 @@ export const MAYOR_REVIEW_STORAGE_KEY = "matnog-bpls-mayor-review-overrides-v1";
 export const MAYOR_REVIEW_ACTOR = "Roberto P. Hababag";
 export const PERMIT_DOCUMENT_STORAGE_KEY = "matnog-bpls-permit-document-overrides-v1";
 export const PERMIT_DOCUMENT_ACTOR = "Maricel A. Gacosta";
+export const PERMIT_RELEASE_STORAGE_KEY = "matnog-bpls-permit-release-overrides-v1";
+export const PERMIT_RELEASE_ACTOR = "Maricel A. Gacosta";
 export const MAYOR_RETURN_DESTINATIONS = [
   "BPLO completeness review",
   "Zoning and locational review",
@@ -356,6 +363,7 @@ export function createApplicationTimeline(
   paymentOverride?: PaymentConfirmationOverride,
   mayorOverride?: MayorReviewOverride,
   permitDocumentOverride?: PermitDocumentOverride,
+  permitReleaseOverride?: PermitReleaseOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -408,6 +416,7 @@ export function createApplicationTimeline(
       ...(paymentOverride?.events ?? []),
       ...(mayorOverride?.events ?? []),
       ...(permitDocumentOverride?.events ?? []),
+      ...(permitReleaseOverride?.events ?? []),
     ];
   }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
@@ -431,6 +440,7 @@ export function createApplicationTimeline(
     ...(paymentOverride?.events ?? []),
     ...(mayorOverride?.events ?? []),
     ...(permitDocumentOverride?.events ?? []),
+    ...(permitReleaseOverride?.events ?? []),
   ];
 }
 
@@ -1554,4 +1564,230 @@ export function invalidatePermitDocumentForPaymentReversal(
     },
     event,
   };
+}
+
+export type PermitReleaseFields = Pick<
+  PermitReleaseOverride,
+  | "provider"
+  | "envelopeReference"
+  | "signerEmail"
+  | "sentDate"
+  | "signedDate"
+  | "signatureNotes"
+  | "releaseChannel"
+  | "releaseDate"
+  | "recipientName"
+  | "recipientIdentification"
+  | "recipientContact"
+  | "releasingOfficer"
+  | "acknowledgmentReference"
+  | "acknowledgmentConfirmed"
+  | "releaseNotes"
+>;
+
+export function createDefaultPermitReleaseFields(
+  record: ApplicationDirectoryRecord,
+  document: PermitDocumentOverride,
+): PermitReleaseFields {
+  return {
+    provider: document.signatureProvider.startsWith("DocuSign") ? "DocuSign" : "Manual digital signature",
+    envelopeReference: `DSE-${record.fiscalPeriod}-${record.id.slice(-5)}-V${document.versions.length}`,
+    signerEmail: "mayor@matnog.gov.ph",
+    sentDate: "2026-09-23",
+    signedDate: "2026-09-23",
+    signatureNotes: "",
+    releaseChannel: "Digital email",
+    releaseDate: "2026-09-23",
+    recipientName: record.ownerName,
+    recipientIdentification: "",
+    recipientContact: "",
+    releasingOfficer: PERMIT_RELEASE_ACTOR,
+    acknowledgmentReference: `ACK-${record.fiscalPeriod}-${record.id.slice(-5)}`,
+    acknowledgmentConfirmed: false,
+    releaseNotes: "",
+  };
+}
+
+export function validatePermitReleaseAction(
+  action: PermitReleaseAction,
+  fields: PermitReleaseFields,
+  current?: PermitReleaseOverride,
+) {
+  if (action === "send") {
+    if (!fields.provider.trim()) return "Select the signature provider.";
+    if (!fields.envelopeReference.trim()) return "Enter the signature envelope reference.";
+    if (!fields.signerEmail.trim() || !fields.signerEmail.includes("@")) return "Enter a valid signer email address.";
+    if (!fields.sentDate) return "Enter the signature sent date.";
+    if (fields.sentDate > "2026-09-23") return "The sent date cannot be in the future.";
+  }
+  if (action === "signed") {
+    if (current?.signatureStatus !== "Sent") return "Send the document for signature before recording completion.";
+    if (!fields.signedDate) return "Enter the signature completion date.";
+    if (fields.signedDate > "2026-09-23") return "The signature date cannot be in the future.";
+    if (fields.signedDate < fields.sentDate) return "The signature date cannot be before the sent date.";
+  }
+  if (["declined", "failed"].includes(action)) {
+    if (current?.signatureStatus !== "Sent") return "Only a sent signature envelope can be declined or failed.";
+    if (fields.signatureNotes.trim().length < 10)
+      return "Enter a signature exception reason of at least 10 characters.";
+  }
+  if (action === "release") {
+    if (current?.signatureStatus !== "Signed") return "A completed signature is required before release.";
+    if (!fields.releaseChannel.trim()) return "Select a release channel.";
+    if (!fields.releaseDate) return "Enter the release date.";
+    if (fields.releaseDate > "2026-09-23") return "The release date cannot be in the future.";
+    if (fields.releaseDate < fields.signedDate) return "The release date cannot be before signature completion.";
+    if (!fields.recipientName.trim()) return "Enter the recipient name.";
+    if (!fields.recipientIdentification.trim()) return "Enter the recipient identification or authority.";
+    if (!fields.releasingOfficer.trim()) return "Enter the releasing officer.";
+    if (!fields.acknowledgmentReference.trim()) return "Enter the release acknowledgment reference.";
+    if (!fields.acknowledgmentConfirmed) return "Confirm that the recipient acknowledgment was captured.";
+  }
+  return "";
+}
+
+function updateSignatureAttempts(
+  applicationId: string,
+  current: PermitReleaseOverride | undefined,
+  action: PermitReleaseAction,
+  fields: PermitReleaseFields,
+  occurredAt: string,
+): PermitSignatureAttempt[] {
+  const attempts = current?.attempts ?? [];
+  if (action === "send") {
+    return [
+      ...attempts,
+      {
+        id: `SIG-${applicationId.slice(-5)}-${attempts.length + 1}`,
+        provider: fields.provider.trim(),
+        envelopeReference: fields.envelopeReference.trim(),
+        signerEmail: fields.signerEmail.trim(),
+        status: "Sent",
+        sentAt: occurredAt,
+        completedAt: "",
+        notes: fields.signatureNotes.trim(),
+      },
+    ];
+  }
+  if (!["signed", "declined", "failed"].includes(action)) return attempts;
+  const nextStatus = action === "signed" ? "Signed" : action === "declined" ? "Declined" : "Failed";
+  return attempts.map((attempt, index) =>
+    index === attempts.length - 1
+      ? {
+          ...attempt,
+          status: nextStatus,
+          completedAt: occurredAt,
+          notes: fields.signatureNotes.trim(),
+        }
+      : attempt,
+  );
+}
+
+export function applyPermitReleaseAction(
+  record: ApplicationDirectoryRecord,
+  document: PermitDocumentOverride,
+  current: PermitReleaseOverride | undefined,
+  action: PermitReleaseAction,
+  fields: PermitReleaseFields,
+  occurredAt = "2026-09-23 22:00",
+): PermitReleaseResult {
+  const signatureStatus =
+    action === "send"
+      ? "Sent"
+      : action === "signed"
+        ? "Signed"
+        : action === "declined"
+          ? "Declined"
+          : action === "failed"
+            ? "Failed"
+            : (current?.signatureStatus ?? "Pending");
+  const releaseStatus =
+    action === "release" ? "Released" : signatureStatus === "Signed" ? "Ready for release" : "Not released";
+  const labels: Record<PermitReleaseAction, string> = {
+    send: "Document sent for e-signature",
+    signed: "Document signature completed",
+    declined: "Document signature declined",
+    failed: "Document signature failed",
+    release: record.type === "Closure" ? "Closure certificate released" : "Business permit issued",
+  };
+  const detail =
+    action === "send"
+      ? `${fields.envelopeReference.trim()} sent through ${fields.provider.trim()} to ${fields.signerEmail.trim()}.`
+      : action === "signed"
+        ? `${document.documentNumber} signature completed under envelope ${fields.envelopeReference.trim()}.`
+        : action === "declined" || action === "failed"
+          ? `${fields.envelopeReference.trim()}: ${fields.signatureNotes.trim()}`
+          : `${document.documentNumber} released through ${fields.releaseChannel} to ${fields.recipientName.trim()} under acknowledgment ${fields.acknowledgmentReference.trim()}.`;
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-RELEASE-${(current?.events.length ?? 0) + 1}`,
+    action: labels[action],
+    detail,
+    actor: PERMIT_RELEASE_ACTOR,
+    office: "BPLO",
+    occurredAt,
+  };
+  const override: PermitReleaseOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    documentNumber: document.documentNumber,
+    documentVersion: document.versions.at(-1)?.version ?? 1,
+    qrToken: document.qrToken,
+    signatureStatus,
+    releaseStatus,
+    ...fields,
+    provider: fields.provider.trim(),
+    envelopeReference: fields.envelopeReference.trim(),
+    signerEmail: fields.signerEmail.trim(),
+    signatureNotes: fields.signatureNotes.trim(),
+    recipientName: fields.recipientName.trim(),
+    recipientIdentification: fields.recipientIdentification.trim(),
+    recipientContact: fields.recipientContact.trim(),
+    releasingOfficer: fields.releasingOfficer.trim(),
+    acknowledgmentReference: fields.acknowledgmentReference.trim(),
+    releaseNotes: fields.releaseNotes.trim(),
+    attempts: updateSignatureAttempts(record.id, current, action, fields, occurredAt),
+    verificationStatus: action === "release" ? "Active" : "Pending",
+    actor: PERMIT_RELEASE_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const updatedRecord: ApplicationDirectoryRecord =
+    action === "release"
+      ? {
+          ...record,
+          status: record.type === "Closure" ? "Closed" : "Issued",
+          currentStage: "Completed",
+          assignedOfficer: PERMIT_RELEASE_ACTOR,
+          updatedAt: occurredAt,
+        }
+      : {
+          ...record,
+          status: "Ready to issue",
+          currentStage:
+            action === "signed" ? "Ready for release" : action === "send" ? "Awaiting e-signature" : "For e-signature",
+          assignedOfficer: PERMIT_RELEASE_ACTOR,
+          updatedAt: occurredAt,
+        };
+  return { record: updatedRecord, override, event };
+}
+
+export function synchronizeReleasedBusiness(
+  business: BusinessDirectoryRecord,
+  record: ApplicationDirectoryRecord,
+  document: PermitDocumentOverride,
+  releaseDate: string,
+) {
+  if (record.type === "Closure") return { ...business, status: "Closed" as const, updatedAt: `${releaseDate} 22:00` };
+  return {
+    ...business,
+    status: "Active" as const,
+    permitNumber: document.documentNumber,
+    permitIssuedAt: releaseDate,
+    permitValidUntil: document.effectiveUntil,
+    updatedAt: `${releaseDate} 22:00`,
+  };
+}
+
+export function mergePermitReleaseOverrides(overrides: readonly PermitReleaseOverride[], next: PermitReleaseOverride) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
 }

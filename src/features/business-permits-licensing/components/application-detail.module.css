@@ -1191,6 +1191,136 @@
   color: #858c9b;
   font-size: 7px;
 }
+.signatureStatusStrip {
+  padding: 13px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #e8eaf0;
+  background: #fafbfc;
+}
+.signatureStatusStrip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7d8493;
+  font-size: 7px;
+  font-weight: 700;
+}
+.signatureStatusStrip i {
+  height: 1px;
+  background: #dfe2e8;
+}
+.signatureStatusStrip .workflowComplete {
+  color: #28866d;
+}
+.signatureStatusStrip .workflowCurrent {
+  color: #7653d2;
+}
+.signatureWorkspace {
+  padding: 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.workflowPanel {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e0e3ea;
+  background: #fff;
+}
+.workflowPanel fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.workflowPanel fieldset:disabled {
+  opacity: 0.58;
+}
+.releaseLocked {
+  background: #f8f9fb;
+}
+.acknowledgmentCheck {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #596173;
+  font-size: 8px;
+  line-height: 1.45;
+}
+.acknowledgmentCheck input {
+  margin: 1px 0 0;
+  accent-color: #7047d7;
+}
+.releaseComplete {
+  margin-top: 14px;
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #bee2d5;
+  background: #f0faf6;
+  color: #24765f;
+}
+.releaseComplete span,
+.releaseComplete strong,
+.releaseComplete small {
+  display: block;
+}
+.releaseComplete strong {
+  font-size: 9px;
+}
+.releaseComplete small {
+  margin-top: 2px;
+  font-size: 7px;
+}
+.signatureError {
+  margin: 0 18px 14px !important;
+  min-height: auto !important;
+  color: #b23e49 !important;
+  font-size: 8px !important;
+  font-weight: 600;
+}
+.signatureAttempts {
+  margin: 0 18px 18px;
+  border: 1px solid #e1e4ea;
+}
+.signatureAttempts header,
+.signatureAttempts article {
+  padding: 9px 11px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+}
+.signatureAttempts header {
+  background: #f7f8fa;
+  color: #555d6f;
+  font-size: 8px;
+}
+.signatureAttempts header small,
+.signatureAttempts article > span:last-child {
+  text-align: right;
+}
+.signatureAttempts article {
+  border-top: 1px solid #e8eaf0;
+}
+.signatureAttempts span,
+.signatureAttempts strong,
+.signatureAttempts small {
+  display: block;
+}
+.signatureAttempts strong {
+  color: #383f4f;
+  font-size: 8px;
+}
+.signatureAttempts small {
+  margin-top: 2px;
+  color: #858c9b;
+  font-size: 7px;
+}
 .timeline {
   margin: 0;
   padding: 15px 18px 18px;
@@ -1571,6 +1701,23 @@
   .documentFooter {
     align-items: stretch;
     flex-direction: column;
+  }
+  .signatureStatusStrip {
+    grid-template-columns: 1fr;
+  }
+  .signatureStatusStrip i {
+    width: 1px;
+    height: 12px;
+    margin-left: 6px;
+  }
+  .signatureWorkspace,
+  .signatureAttempts header,
+  .signatureAttempts article {
+    grid-template-columns: 1fr;
+  }
+  .signatureAttempts header small,
+  .signatureAttempts article > span:last-child {
+    text-align: left;
   }
   .businessStrip {
     grid-template-columns: auto 1fr;

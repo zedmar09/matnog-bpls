@@ -39,6 +39,7 @@ import { HealthReviewActions, type HealthReviewFields } from "../components/heal
 import { MayorReviewActions } from "../components/mayor-review-actions";
 import { PaymentConfirmationActions } from "../components/payment-confirmation-actions";
 import { PermitDocumentGeneration } from "../components/permit-document-generation";
+import { PermitSignatureRelease } from "../components/permit-signature-release";
 import { TreasurerAssessmentActions } from "../components/treasurer-assessment-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
@@ -56,12 +57,15 @@ import type {
   PaymentConfirmationOverride,
   PermitDocumentAction,
   PermitDocumentOverride,
+  PermitReleaseAction,
+  PermitReleaseOverride,
   TreasurerAssessmentAction,
   TreasurerAssessmentOverride,
   ZoningReviewAction,
   ZoningReviewOverride,
 } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
+import type { BusinessDirectoryRecord } from "../types/business-directory";
 import {
   applyBploDecision,
   applyFireDecision,
@@ -70,6 +74,7 @@ import {
   applyPaymentConfirmation,
   applyPaymentReversal,
   applyPermitDocumentAction,
+  applyPermitReleaseAction,
   applyTreasurerAssessment,
   applyZoningDecision,
   BPLO_REVIEW_ACTOR,
@@ -83,6 +88,7 @@ import {
   createDefaultMayorFields,
   createDefaultPaymentFields,
   createDefaultPermitDocumentFields,
+  createDefaultPermitReleaseFields,
   createOfficeReviews,
   createProcessingGates,
   FIRE_REVIEW_ACTOR,
@@ -100,6 +106,7 @@ import {
   mergeMayorReviewOverrides,
   mergePaymentConfirmationOverrides,
   mergePermitDocumentOverrides,
+  mergePermitReleaseOverrides,
   mergeTreasurerAssessmentOverrides,
   mergeZoningReviewOverrides,
   PAYMENT_CONFIRMATION_ACTOR,
@@ -107,8 +114,12 @@ import {
   type PaymentConfirmationFields,
   PERMIT_DOCUMENT_ACTOR,
   PERMIT_DOCUMENT_STORAGE_KEY,
+  PERMIT_RELEASE_ACTOR,
+  PERMIT_RELEASE_STORAGE_KEY,
   type PermitDocumentFields,
+  type PermitReleaseFields,
   resolveApplicationRecord,
+  synchronizeReleasedBusiness,
   TREASURER_ASSESSMENT_ACTOR,
   TREASURER_ASSESSMENT_STORAGE_KEY,
   type TreasurerAssessmentFields,
@@ -119,13 +130,18 @@ import {
   validatePaymentConfirmation,
   validatePaymentReversal,
   validatePermitDocument,
+  validatePermitReleaseAction,
   validateTreasurerAssessment,
   validateZoningDecision,
   ZONING_REVIEW_ACTOR,
   ZONING_REVIEW_STORAGE_KEY,
 } from "../utils/application-detail-utils";
 import { SAVED_APPLICATIONS_STORAGE_KEY } from "../utils/application-wizard-utils";
-import { mergeBusinessRecords, REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
+import {
+  mergeBusinessRecords,
+  REGISTERED_BUSINESSES_STORAGE_KEY,
+  upsertBusinessRecord,
+} from "../utils/business-registration-utils";
 
 function formatDate(value: string, includeTime = false) {
   if (!value) return "—";
@@ -167,6 +183,24 @@ function GateIcon({ status }: { status: ApplicationGateStatus }) {
   return <CircleDot size={13} />;
 }
 
+const EMPTY_PERMIT_RELEASE_FIELDS: PermitReleaseFields = {
+  provider: "DocuSign",
+  envelopeReference: "",
+  signerEmail: "mayor@matnog.gov.ph",
+  sentDate: "2026-09-23",
+  signedDate: "2026-09-23",
+  signatureNotes: "",
+  releaseChannel: "Digital email",
+  releaseDate: "2026-09-23",
+  recipientName: "",
+  recipientIdentification: "",
+  recipientContact: "",
+  releasingOfficer: "Maricel A. Gacosta",
+  acknowledgmentReference: "",
+  acknowledgmentConfirmed: false,
+  releaseNotes: "",
+};
+
 export function ApplicationDetailView({ applicationId }: { applicationId: string }) {
   const seededRecord = resolveApplicationRecord(MATNOG_APPLICATION_DIRECTORY, [], applicationId);
   const [record, setRecord] = useState<ApplicationDirectoryRecord | undefined>(seededRecord);
@@ -180,6 +214,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [paymentOverride, setPaymentOverride] = useState<PaymentConfirmationOverride>();
   const [mayorOverride, setMayorOverride] = useState<MayorReviewOverride>();
   const [permitDocumentOverride, setPermitDocumentOverride] = useState<PermitDocumentOverride>();
+  const [permitReleaseOverride, setPermitReleaseOverride] = useState<PermitReleaseOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -250,6 +285,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     PermitDocumentAction,
     "save"
   > | null>(null);
+  const [permitReleaseFields, setPermitReleaseFields] = useState<PermitReleaseFields>(EMPTY_PERMIT_RELEASE_FIELDS);
+  const [permitReleaseError, setPermitReleaseError] = useState("");
+  const [pendingPermitReleaseAction, setPendingPermitReleaseAction] = useState<PermitReleaseAction | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -405,6 +443,34 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       } else if (resolvedRecord) {
         setPermitDocumentFields(createDefaultPermitDocumentFields(resolvedRecord, currentMayorOverride));
       }
+      const permitReleaseOverrides = JSON.parse(
+        window.localStorage.getItem(PERMIT_RELEASE_STORAGE_KEY) ?? "[]",
+      ) as PermitReleaseOverride[];
+      const currentPermitRelease = permitReleaseOverrides.find(
+        (item) => item.applicationId === applicationId.toUpperCase(),
+      );
+      setPermitReleaseOverride(currentPermitRelease);
+      if (currentPermitRelease) {
+        setPermitReleaseFields({
+          provider: currentPermitRelease.provider,
+          envelopeReference: currentPermitRelease.envelopeReference,
+          signerEmail: currentPermitRelease.signerEmail,
+          sentDate: currentPermitRelease.sentDate,
+          signedDate: currentPermitRelease.signedDate,
+          signatureNotes: currentPermitRelease.signatureNotes,
+          releaseChannel: currentPermitRelease.releaseChannel,
+          releaseDate: currentPermitRelease.releaseDate,
+          recipientName: currentPermitRelease.recipientName,
+          recipientIdentification: currentPermitRelease.recipientIdentification,
+          recipientContact: currentPermitRelease.recipientContact,
+          releasingOfficer: currentPermitRelease.releasingOfficer,
+          acknowledgmentReference: currentPermitRelease.acknowledgmentReference,
+          acknowledgmentConfirmed: currentPermitRelease.acknowledgmentConfirmed,
+          releaseNotes: currentPermitRelease.releaseNotes,
+        });
+      } else if (resolvedRecord && currentPermitDocument) {
+        setPermitReleaseFields(createDefaultPermitReleaseFields(resolvedRecord, currentPermitDocument));
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -461,6 +527,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             paymentOverride,
             mayorOverride,
             permitDocumentOverride,
+            permitReleaseOverride,
           )
         : [],
     [
@@ -473,6 +540,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       paymentOverride,
       mayorOverride,
       permitDocumentOverride,
+      permitReleaseOverride,
     ],
   );
   const assessmentTotals = useMemo(() => calculateAssessmentTotals(treasurerFields), [treasurerFields]);
@@ -1079,6 +1147,80 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     );
   }
 
+  function updatePermitReleaseField<K extends keyof PermitReleaseFields>(field: K, value: PermitReleaseFields[K]) {
+    setPermitReleaseFields((current) => ({ ...current, [field]: value }));
+    setPermitReleaseError("");
+  }
+
+  function requestPermitReleaseAction(action: PermitReleaseAction) {
+    const error = validatePermitReleaseAction(action, permitReleaseFields, permitReleaseOverride);
+    if (error) {
+      setPermitReleaseError(error);
+      return;
+    }
+    setPermitReleaseError("");
+    setPendingPermitReleaseAction(action);
+  }
+
+  function commitPermitReleaseAction(action: PermitReleaseAction) {
+    if (!record || !permitDocumentOverride) return;
+    const result = applyPermitReleaseAction(
+      record,
+      permitDocumentOverride,
+      permitReleaseOverride,
+      action,
+      permitReleaseFields,
+    );
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let permitReleaseOverrides: PermitReleaseOverride[] = [];
+    let savedBusinesses: BusinessDirectoryRecord[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      permitReleaseOverrides = JSON.parse(window.localStorage.getItem(PERMIT_RELEASE_STORAGE_KEY) ?? "[]");
+      savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      permitReleaseOverrides = [];
+      savedBusinesses = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      PERMIT_RELEASE_STORAGE_KEY,
+      JSON.stringify(mergePermitReleaseOverrides(permitReleaseOverrides, result.override)),
+    );
+    if (action === "release" && business) {
+      const releasedBusiness = synchronizeReleasedBusiness(
+        business,
+        result.record,
+        permitDocumentOverride,
+        permitReleaseFields.releaseDate,
+      );
+      const businessOverrides = upsertBusinessRecord(savedBusinesses, releasedBusiness);
+      window.localStorage.setItem(REGISTERED_BUSINESSES_STORAGE_KEY, JSON.stringify(businessOverrides));
+      setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, businessOverrides));
+    }
+    setRecord(result.record);
+    setPermitReleaseOverride(result.override);
+    setPendingPermitReleaseAction(null);
+    setPermitReleaseError("");
+    setNotice(
+      action === "send"
+        ? "Signature envelope sent and recorded."
+        : action === "signed"
+          ? "Signature completion recorded; controlled release is now available."
+          : action === "declined"
+            ? "Signature decline recorded; the document can be resent after correction."
+            : action === "failed"
+              ? "Signature provider failure recorded; the document can be resent."
+              : record.type === "Closure"
+                ? "Closure certificate released and the business registry marked Closed."
+                : "Business permit issued and synchronized to the business registry.",
+    );
+  }
+
   if (!loaded)
     return (
       <main className={styles.page}>
@@ -1134,6 +1276,11 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     record.status === "Ready to issue" &&
     mayorOverride?.status === "Approved" &&
     ["Permit generation", "Closure certificate generation", "For e-signature"].includes(record.currentStage);
+  const permitReleaseVisible =
+    permitDocumentOverride?.status === "For signature" &&
+    permitDocumentOverride.versions.length > 0 &&
+    (["For e-signature", "Awaiting e-signature", "Ready for release", "Completed"].includes(record.currentStage) ||
+      Boolean(permitReleaseOverride));
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -1152,7 +1299,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          {permitDocumentActive ? (
+          {permitReleaseVisible ? (
+            <FileCheck2 size={14} />
+          ) : permitDocumentActive ? (
             <FileCheck2 size={14} />
           ) : mayorReviewActive ? (
             <ShieldCheck size={14} />
@@ -1169,25 +1318,31 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           ) : (
             <ShieldCheck size={14} />
           )}
-          {permitDocumentActive
-            ? permitDocumentOverride?.status === "For signature"
-              ? `Document prepared for e-signature · ${PERMIT_DOCUMENT_ACTOR}`
-              : `Document generation active · ${PERMIT_DOCUMENT_ACTOR}`
-            : mayorReviewActive
-              ? `Mayor final approval active · ${MAYOR_REVIEW_ACTOR}`
-              : paymentConfirmationActive
-                ? `Payment confirmation active · ${PAYMENT_CONFIRMATION_ACTOR}`
-                : treasurerReviewActive
-                  ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
-                  : fireReviewActive
-                    ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
-                    : healthReviewActive
-                      ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
-                      : zoningReviewActive
-                        ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
-                        : bploReviewActive
-                          ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
-                          : `Current office · ${record.assignedOfficer}`}
+          {permitReleaseVisible
+            ? permitReleaseOverride?.releaseStatus === "Released"
+              ? `Document released · ${permitReleaseOverride.releasingOfficer}`
+              : permitReleaseOverride?.signatureStatus === "Signed"
+                ? `Controlled release ready · ${PERMIT_RELEASE_ACTOR}`
+                : `E-signature active · ${PERMIT_RELEASE_ACTOR}`
+            : permitDocumentActive
+              ? permitDocumentOverride?.status === "For signature"
+                ? `Document prepared for e-signature · ${PERMIT_DOCUMENT_ACTOR}`
+                : `Document generation active · ${PERMIT_DOCUMENT_ACTOR}`
+              : mayorReviewActive
+                ? `Mayor final approval active · ${MAYOR_REVIEW_ACTOR}`
+                : paymentConfirmationActive
+                  ? `Payment confirmation active · ${PAYMENT_CONFIRMATION_ACTOR}`
+                  : treasurerReviewActive
+                    ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
+                    : fireReviewActive
+                      ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
+                      : healthReviewActive
+                        ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
+                        : zoningReviewActive
+                          ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+                          : bploReviewActive
+                            ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+                            : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -1650,6 +1805,18 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             />
           ) : null}
 
+          {permitReleaseVisible && permitDocumentOverride ? (
+            <PermitSignatureRelease
+              record={record}
+              document={permitDocumentOverride}
+              workflow={permitReleaseOverride}
+              fields={permitReleaseFields}
+              error={permitReleaseError}
+              onFieldChange={updatePermitReleaseField}
+              onAction={requestPermitReleaseAction}
+            />
+          ) : null}
+
           <section className={styles.card}>
             <header className={styles.cardHeader}>
               <span>
@@ -1979,6 +2146,47 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         destructive={pendingPaymentAction === "reject"}
         onConfirm={() => {
           if (pendingPaymentAction) commitPaymentAction(pendingPaymentAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingPermitReleaseAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingPermitReleaseAction(null);
+        }}
+        title={
+          pendingPermitReleaseAction === "send"
+            ? "Send document for e-signature?"
+            : pendingPermitReleaseAction === "signed"
+              ? "Confirm completed signature?"
+              : pendingPermitReleaseAction === "declined"
+                ? "Record signature decline?"
+                : pendingPermitReleaseAction === "failed"
+                  ? "Record signature failure?"
+                  : `Finalize ${record.type === "Closure" ? "closure" : "permit issuance"}?`
+        }
+        description={
+          pendingPermitReleaseAction === "send"
+            ? `This records envelope ${permitReleaseFields.envelopeReference} and routes the document to the authorized signatory.`
+            : pendingPermitReleaseAction === "signed"
+              ? "This records the signature as completed and unlocks controlled release."
+              : pendingPermitReleaseAction === "declined" || pendingPermitReleaseAction === "failed"
+                ? "This preserves the signature exception in the attempt history and allows a corrected envelope to be resent."
+                : `This activates QR verification, records recipient acknowledgment, and marks the application ${record.type === "Closure" ? "Closed" : "Issued"}.`
+        }
+        confirmLabel={
+          pendingPermitReleaseAction === "send"
+            ? "Send envelope"
+            : pendingPermitReleaseAction === "signed"
+              ? "Confirm signature"
+              : pendingPermitReleaseAction === "declined"
+                ? "Record declined"
+                : pendingPermitReleaseAction === "failed"
+                  ? "Record failed"
+                  : "Finalize release"
+        }
+        destructive={["declined", "failed"].includes(pendingPermitReleaseAction ?? "")}
+        onConfirm={() => {
+          if (pendingPermitReleaseAction) commitPermitReleaseAction(pendingPermitReleaseAction);
         }}
       />
       <ConfirmationDialog

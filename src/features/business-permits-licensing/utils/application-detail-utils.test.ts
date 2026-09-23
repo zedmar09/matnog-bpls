@@ -1,4 +1,5 @@
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
+import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
 import {
   applyBploDecision,
   applyFireDecision,
@@ -7,6 +8,7 @@ import {
   applyPaymentConfirmation,
   applyPaymentReversal,
   applyPermitDocumentAction,
+  applyPermitReleaseAction,
   applyTreasurerAssessment,
   applyZoningDecision,
   calculateAssessmentTotals,
@@ -17,11 +19,13 @@ import {
   createDefaultMayorFields,
   createDefaultPaymentFields,
   createDefaultPermitDocumentFields,
+  createDefaultPermitReleaseFields,
   createOfficeReviews,
   createProcessingGates,
   invalidateMayorApprovalForPaymentReversal,
   invalidatePermitDocumentForPaymentReversal,
   resolveApplicationRecord,
+  synchronizeReleasedBusiness,
   validateBploDecision,
   validateFireDecision,
   validateHealthDecision,
@@ -29,6 +33,7 @@ import {
   validatePaymentConfirmation,
   validatePaymentReversal,
   validatePermitDocument,
+  validatePermitReleaseAction,
   validateTreasurerAssessment,
   validateZoningDecision,
 } from "./application-detail-utils";
@@ -510,4 +515,103 @@ test("Payment reversal invalidates a generated document while retaining its vers
   assert.equal(invalidated.override.status, "Invalidated");
   assert.equal(invalidated.override.versions.length, 1);
   assert.equal(invalidated.override.events.at(-1)?.action, "Generated document invalidated");
+});
+
+test("Signature and release workflow closes a closure application and activates verification", () => {
+  const ready = {
+    ...payableRecord,
+    type: "Closure" as const,
+    status: "Ready to issue" as const,
+    currentStage: "For e-signature",
+  };
+  const document = applyPermitDocumentAction(
+    ready,
+    undefined,
+    "generate",
+    createDefaultPermitDocumentFields(ready),
+  ).override;
+  const fields = createDefaultPermitReleaseFields(ready, document);
+  const sent = applyPermitReleaseAction(ready, document, undefined, "send", fields);
+  assert.equal(sent.override.signatureStatus, "Sent");
+  assert.equal(sent.record.currentStage, "Awaiting e-signature");
+  const signed = applyPermitReleaseAction(sent.record, document, sent.override, "signed", fields);
+  assert.equal(signed.override.releaseStatus, "Ready for release");
+  assert.equal(signed.record.currentStage, "Ready for release");
+  const released = applyPermitReleaseAction(signed.record, document, signed.override, "release", {
+    ...fields,
+    recipientIdentification: "PhilSys ending 3180",
+    acknowledgmentConfirmed: true,
+  });
+  assert.equal(released.record.status, "Closed");
+  assert.equal(released.record.currentStage, "Completed");
+  assert.equal(released.override.verificationStatus, "Active");
+});
+
+test("Controlled release remains locked until signing and acknowledgment are complete", () => {
+  const ready = { ...payableRecord, status: "Ready to issue" as const, currentStage: "For e-signature" };
+  const document = applyPermitDocumentAction(
+    ready,
+    undefined,
+    "generate",
+    createDefaultPermitDocumentFields(ready),
+  ).override;
+  const fields = createDefaultPermitReleaseFields(ready, document);
+  assert.ok(validatePermitReleaseAction("release", fields));
+  const sent = applyPermitReleaseAction(ready, document, undefined, "send", fields);
+  const signed = applyPermitReleaseAction(sent.record, document, sent.override, "signed", fields);
+  assert.ok(validatePermitReleaseAction("release", fields, signed.override));
+  assert.equal(
+    validatePermitReleaseAction(
+      "release",
+      { ...fields, recipientIdentification: "Driver license ending 3010", acknowledgmentConfirmed: true },
+      signed.override,
+    ),
+    "",
+  );
+});
+
+test("Signature exceptions preserve attempt history and allow resend", () => {
+  const ready = { ...payableRecord, status: "Ready to issue" as const, currentStage: "For e-signature" };
+  const document = applyPermitDocumentAction(
+    ready,
+    undefined,
+    "generate",
+    createDefaultPermitDocumentFields(ready),
+  ).override;
+  const fields = createDefaultPermitReleaseFields(ready, document);
+  const sent = applyPermitReleaseAction(ready, document, undefined, "send", fields);
+  const failed = applyPermitReleaseAction(sent.record, document, sent.override, "failed", {
+    ...fields,
+    signatureNotes: "DocuSign callback reported an expired signing envelope.",
+  });
+  const resent = applyPermitReleaseAction(failed.record, document, failed.override, "send", {
+    ...fields,
+    envelopeReference: `${fields.envelopeReference}-R2`,
+  });
+  assert.deepEqual(
+    resent.override.attempts.map((attempt) => attempt.status),
+    ["Failed", "Sent"],
+  );
+});
+
+test("Final release synchronizes active permits and business closures", () => {
+  const business = MATNOG_BUSINESS_DIRECTORY[0];
+  const permitRecord = { ...payableRecord, type: "Renewal" as const };
+  const permitDocument = applyPermitDocumentAction(
+    permitRecord,
+    undefined,
+    "generate",
+    createDefaultPermitDocumentFields(permitRecord),
+  ).override;
+  const active = synchronizeReleasedBusiness(business, permitRecord, permitDocument, "2026-09-23");
+  assert.equal(active.status, "Active");
+  assert.equal(active.permitNumber, permitDocument.documentNumber);
+  const closed = synchronizeReleasedBusiness(
+    business,
+    { ...permitRecord, type: "Closure" },
+    permitDocument,
+    "2026-09-23",
+  );
+  assert.equal(closed.status, "Closed");
+  assert.equal(closed.permitNumber, business.permitNumber);
 });

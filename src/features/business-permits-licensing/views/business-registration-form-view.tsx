@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   AlertCircle,
@@ -33,10 +34,14 @@ import {
   EMPTY_BUSINESS_REGISTRATION,
 } from "../types/business-registration";
 import {
-  BUSINESS_DRAFT_STORAGE_KEY,
+  businessRecordToRegistrationValues,
   createRegisteredBusiness,
+  getBusinessDraftStorageKey,
   getStepErrors,
+  mergeBusinessRecords,
   REGISTERED_BUSINESSES_STORAGE_KEY,
+  updateBusinessRecord,
+  upsertBusinessRecord,
   validateBusinessRegistration,
 } from "../utils/business-registration-utils";
 
@@ -45,7 +50,7 @@ const steps = [
   { label: "Owner & contact", short: "Owner", icon: UserRound },
   { label: "Activity & location", short: "Location", icon: MapPin },
   { label: "Operations", short: "Operations", icon: WalletCards },
-  { label: "Review & register", short: "Review", icon: FileCheck2 },
+  { label: "Review & save", short: "Review", icon: FileCheck2 },
 ] as const;
 
 function Field({
@@ -140,24 +145,49 @@ function ReviewRow({ label, value }: { label: string; value: string | number }) 
   );
 }
 
-export function BusinessRegistrationFormView() {
+export function BusinessRegistrationFormView({ businessId }: { businessId?: string }) {
+  const router = useRouter();
   const [values, setValues] = useState<BusinessRegistrationValues>(EMPTY_BUSINESS_REGISTRATION);
   const [errors, setErrors] = useState<BusinessRegistrationErrors>({});
   const [step, setStep] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [draftMessage, setDraftMessage] = useState("");
   const [created, setCreated] = useState<BusinessDirectoryRecord | null>(null);
+  const [sourceRecord, setSourceRecord] = useState<BusinessDirectoryRecord | null | undefined>(
+    businessId ? undefined : null,
+  );
+  const editing = Boolean(businessId);
+  const draftStorageKey = getBusinessDraftStorageKey(businessId);
 
   useEffect(() => {
-    const rawDraft = window.localStorage.getItem(BUSINESS_DRAFT_STORAGE_KEY);
-    if (!rawDraft) return;
     try {
-      setValues({ ...EMPTY_BUSINESS_REGISTRATION, ...JSON.parse(rawDraft) });
-      setDraftMessage("Saved draft restored");
+      const savedRecords = JSON.parse(
+        window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]",
+      ) as BusinessDirectoryRecord[];
+      const source = businessId
+        ? mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedRecords).find((record) => record.id === businessId)
+        : undefined;
+      if (businessId && !source) {
+        setSourceRecord(null);
+        return;
+      }
+      if (source) {
+        setSourceRecord(source);
+        setValues(businessRecordToRegistrationValues(source));
+      }
+      const rawDraft = window.localStorage.getItem(draftStorageKey);
+      if (rawDraft) {
+        setValues({
+          ...(source ? businessRecordToRegistrationValues(source) : EMPTY_BUSINESS_REGISTRATION),
+          ...JSON.parse(rawDraft),
+        });
+        setDraftMessage("Saved draft restored");
+      }
     } catch {
-      window.localStorage.removeItem(BUSINESS_DRAFT_STORAGE_KEY);
+      window.localStorage.removeItem(draftStorageKey);
+      if (businessId) setSourceRecord(null);
     }
-  }, []);
+  }, [businessId, draftStorageKey]);
 
   const completedSteps = useMemo(() => {
     const allErrors = validateBusinessRegistration(values);
@@ -185,21 +215,21 @@ export function BusinessRegistrationFormView() {
   }
 
   function saveDraft() {
-    window.localStorage.setItem(BUSINESS_DRAFT_STORAGE_KEY, JSON.stringify(values));
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(values));
     setDirty(false);
     setDraftMessage("Draft saved on this device");
   }
 
   function discardDraft() {
-    window.localStorage.removeItem(BUSINESS_DRAFT_STORAGE_KEY);
-    setValues(EMPTY_BUSINESS_REGISTRATION);
+    window.localStorage.removeItem(draftStorageKey);
+    setValues(sourceRecord ? businessRecordToRegistrationValues(sourceRecord) : EMPTY_BUSINESS_REGISTRATION);
     setErrors({});
     setStep(0);
     setDirty(false);
     setDraftMessage("Draft discarded");
   }
 
-  function registerBusiness(event: React.FormEvent) {
+  function saveBusiness(event: React.FormEvent) {
     event.preventDefault();
     const nextErrors = validateBusinessRegistration(values);
     if (Object.keys(nextErrors).length > 0) {
@@ -214,12 +244,44 @@ export function BusinessRegistrationFormView() {
     } catch {
       savedRecords = [];
     }
-    const record = createRegisteredBusiness(values, MATNOG_BUSINESS_DIRECTORY.length + savedRecords.length + 1);
-    window.localStorage.setItem(REGISTERED_BUSINESSES_STORAGE_KEY, JSON.stringify([record, ...savedRecords]));
-    window.localStorage.removeItem(BUSINESS_DRAFT_STORAGE_KEY);
+    const record = sourceRecord
+      ? updateBusinessRecord(sourceRecord, values)
+      : createRegisteredBusiness(values, MATNOG_BUSINESS_DIRECTORY.length + savedRecords.length + 1);
+    window.localStorage.setItem(
+      REGISTERED_BUSINESSES_STORAGE_KEY,
+      JSON.stringify(upsertBusinessRecord(savedRecords, record)),
+    );
+    window.localStorage.removeItem(draftStorageKey);
+    if (sourceRecord) {
+      router.push(`/businesses/${record.id}?saved=1`);
+      return;
+    }
     setCreated(record);
     setDirty(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  if (businessId && sourceRecord === undefined) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.loadingState}>Loading business record…</div>
+      </main>
+    );
+  }
+
+  if (businessId && sourceRecord === null) {
+    return (
+      <main className={styles.page}>
+        <section className={styles.notFoundState}>
+          <Building2 size={34} />
+          <h1>Business record not found</h1>
+          <p>The requested business is not available in the current registry.</p>
+          <Link className={styles.primaryButton} href="/businesses">
+            <ChevronLeft size={14} /> Return to registry
+          </Link>
+        </section>
+      </main>
+    );
   }
 
   if (created) {
@@ -259,15 +321,19 @@ export function BusinessRegistrationFormView() {
       <header className={styles.pageHeader}>
         <div>
           <p className={styles.eyebrow}>Business Registration &amp; Renewal</p>
-          <h1>Register Business</h1>
-          <p>Create a municipal business identity record before starting permit assessment.</p>
+          <h1>{editing ? "Edit Business" : "Register Business"}</h1>
+          <p>
+            {editing
+              ? "Update the business record while preserving its permit and application history."
+              : "Create a municipal business identity record before starting permit assessment."}
+          </p>
         </div>
-        <Link className={styles.secondaryButton} href="/businesses">
-          <ChevronLeft size={15} /> Back to registry
+        <Link className={styles.secondaryButton} href={editing ? `/businesses/${businessId}` : "/businesses"}>
+          <ChevronLeft size={15} /> {editing ? "Cancel editing" : "Back to registry"}
         </Link>
       </header>
 
-      <form className={styles.formCard} onSubmit={registerBusiness} noValidate>
+      <form className={styles.formCard} onSubmit={saveBusiness} noValidate>
         <nav className={styles.stepper} aria-label="Registration progress">
           {steps.map((item, index) => {
             const Icon = item.icon;
@@ -323,8 +389,9 @@ export function BusinessRegistrationFormView() {
                 <div className={styles.infoBanner}>
                   <Info size={16} />
                   <span>
-                    A Business ID will be generated after registration. A permit number is issued only after application
-                    approval.
+                    {editing
+                      ? `${sourceRecord?.id} is permanent. Permit ${sourceRecord?.permitNumber} and its history will not be changed by this form.`
+                      : "A Business ID will be generated after registration. A permit number is issued only after application approval."}
                   </span>
                 </div>
                 <div className={styles.formGrid}>
@@ -669,8 +736,12 @@ export function BusinessRegistrationFormView() {
                     <FileCheck2 size={18} />
                   </span>
                   <div>
-                    <h2>Review and register</h2>
-                    <p>Confirm the business information before creating the municipal record.</p>
+                    <h2>{editing ? "Review and save" : "Review and register"}</h2>
+                    <p>
+                      {editing
+                        ? "Confirm the updated information before saving the record."
+                        : "Confirm the business information before creating the municipal record."}
+                    </p>
                   </div>
                 </div>
                 <div className={styles.reviewGrid}>
@@ -746,8 +817,9 @@ export function BusinessRegistrationFormView() {
                   <span>
                     <strong>I certify that the information provided is true and complete.</strong>
                     <small>
-                      I understand that this creates a business registry record only. A separate permit application and
-                      assessment are still required.
+                      {editing
+                        ? "I understand these changes update the registry record but do not alter previously issued permits or completed application history."
+                        : "I understand that this creates a business registry record only. A separate permit application and assessment are still required."}
                     </small>
                     {errors.declarationAccepted ? <em>{errors.declarationAccepted}</em> : null}
                   </span>
@@ -757,8 +829,12 @@ export function BusinessRegistrationFormView() {
           </section>
 
           <aside className={styles.sidePanel}>
-            <h2>Registration status</h2>
-            <p>Complete all required information before creating the record.</p>
+            <h2>{editing ? "Record status" : "Registration status"}</h2>
+            <p>
+              {editing
+                ? "Review and save valid changes to this business."
+                : "Complete all required information before creating the record."}
+            </p>
             <div className={styles.progressTrack}>
               <span style={{ width: `${((step + 1) / steps.length) * 100}%` }} />
             </div>
@@ -768,15 +844,15 @@ export function BusinessRegistrationFormView() {
             <dl>
               <div>
                 <dt>Record status</dt>
-                <dd>New registration</dd>
+                <dd>{editing ? "Editing existing record" : "New registration"}</dd>
               </div>
               <div>
                 <dt>Business ID</dt>
-                <dd>Generated on save</dd>
+                <dd>{sourceRecord?.id ?? "Generated on save"}</dd>
               </div>
               <div>
                 <dt>Permit status</dt>
-                <dd>For application</dd>
+                <dd>{sourceRecord?.status ?? "For application"}</dd>
               </div>
             </dl>
             <div className={styles.draftBox}>
@@ -814,7 +890,7 @@ export function BusinessRegistrationFormView() {
             </button>
           ) : (
             <button type="submit" className={styles.primaryButton}>
-              <CheckCircle2 size={15} /> Register business
+              <CheckCircle2 size={15} /> {editing ? "Save changes" : "Register business"}
             </button>
           )}
         </footer>

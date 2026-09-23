@@ -4,6 +4,10 @@ import type { BusinessRegistrationErrors, BusinessRegistrationValues } from "../
 export const BUSINESS_DRAFT_STORAGE_KEY = "matnog-bpls-business-registration-draft-v1";
 export const REGISTERED_BUSINESSES_STORAGE_KEY = "matnog-bpls-registered-businesses-v1";
 
+export function getBusinessDraftStorageKey(businessId?: string) {
+  return businessId ? `${BUSINESS_DRAFT_STORAGE_KEY}-${businessId}` : BUSINESS_DRAFT_STORAGE_KEY;
+}
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_PATTERN = /^(?:\+63|0)\d{10}$/;
 const TIN_PATTERN = /^\d{3}-?\d{3}-?\d{3}(?:-?\d{3})?$/;
@@ -94,4 +98,75 @@ export function createRegisteredBusiness(
     createdAt: `${today} 08:00`,
     updatedAt: `${today} 08:00`,
   };
+}
+
+export function businessRecordToRegistrationValues(record: BusinessDirectoryRecord): BusinessRegistrationValues {
+  const addressParts = record.address.split(",").map((part) => part.trim());
+  return {
+    registeredName: record.registeredName,
+    tradeName: record.tradeName,
+    organizationType: record.organizationType,
+    registrationAuthority: record.registrationAuthority,
+    registrationNumber: record.registrationNumber,
+    registrationDate: record.registrationDate,
+    establishmentType: record.establishmentType,
+    tin: record.tin,
+    ownerName: record.ownerName,
+    ownerPosition:
+      record.organizationType === "Sole proprietorship" ? "Owner / Proprietor" : "Authorized representative",
+    contactNumber: record.contactNumber.replaceAll(" ", ""),
+    alternateContact: "",
+    email: record.email,
+    activityCategory: record.activityCategory,
+    primaryActivity: record.primaryActivity,
+    psicCode: record.psicCode,
+    riskLevel: record.riskLevel,
+    barangay: record.barangay,
+    street: addressParts[0] ?? "",
+    building: "",
+    sitio: "",
+    postalCode: "4708",
+    landmark: "",
+    employeeCount: String(record.employeeCount),
+    maleEmployees: "",
+    femaleEmployees: "",
+    capitalization: String(record.capitalization),
+    grossSales: String(record.grossSales),
+    startOfOperations: record.registrationDate,
+    accountingPeriod: "Calendar year",
+    declarationAccepted: false,
+  };
+}
+
+export function updateBusinessRecord(
+  record: BusinessDirectoryRecord,
+  values: BusinessRegistrationValues,
+): BusinessDirectoryRecord {
+  const updated = createRegisteredBusiness(values, 1);
+  return {
+    ...record,
+    ...updated,
+    id: record.id,
+    status: record.status,
+    permitNumber: record.permitNumber,
+    permitIssuedAt: record.permitIssuedAt,
+    permitValidUntil: record.permitValidUntil,
+    createdAt: record.createdAt,
+    updatedAt: `${new Date().toISOString().slice(0, 10)} ${new Date().toTimeString().slice(0, 5)}`,
+  };
+}
+
+export function upsertBusinessRecord(
+  records: readonly BusinessDirectoryRecord[],
+  record: BusinessDirectoryRecord,
+): BusinessDirectoryRecord[] {
+  return [record, ...records.filter((item) => item.id !== record.id)];
+}
+
+export function mergeBusinessRecords(
+  seeded: readonly BusinessDirectoryRecord[],
+  overrides: readonly BusinessDirectoryRecord[],
+): BusinessDirectoryRecord[] {
+  const overrideIds = new Set(overrides.map((record) => record.id));
+  return [...overrides, ...seeded.filter((record) => !overrideIds.has(record.id))];
 }

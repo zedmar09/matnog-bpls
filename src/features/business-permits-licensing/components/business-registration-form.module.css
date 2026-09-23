@@ -550,6 +550,28 @@
   justify-content: center;
   gap: 9px;
 }
+.loadingState,
+.notFoundState {
+  max-width: 560px;
+  margin: 70px auto;
+  padding: 38px;
+  border: 1px solid #e0e3e9;
+  background: #fff;
+  color: #6f7688;
+  font-size: 11px;
+  text-align: center;
+}
+.notFoundState > svg {
+  color: #7047d7;
+}
+.notFoundState h1 {
+  margin: 13px 0 4px;
+  color: #283143;
+  font-size: 20px;
+}
+.notFoundState p {
+  margin: 0 0 17px;
+}
 @media (max-width: 900px) {
   .step strong {
     display: none;

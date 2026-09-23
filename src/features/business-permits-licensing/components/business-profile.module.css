@@ -5,6 +5,20 @@
   color: #172033;
   font-family: var(--font-poppins), Poppins, sans-serif;
 }
+.savedNotice {
+  max-width: 1600px;
+  min-height: 40px;
+  margin: 0 auto 12px;
+  padding: 0 13px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #b9dfcb;
+  background: #edf9f2;
+  color: #176b47;
+  font-size: 9px;
+  font-weight: 600;
+}
 .topActions {
   max-width: 1600px;
   margin: 0 auto 14px;

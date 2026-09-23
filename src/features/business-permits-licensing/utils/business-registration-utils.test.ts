@@ -1,5 +1,13 @@
+import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
 import { EMPTY_BUSINESS_REGISTRATION } from "../types/business-registration";
-import { createRegisteredBusiness, validateBusinessRegistration } from "./business-registration-utils";
+import {
+  businessRecordToRegistrationValues,
+  createRegisteredBusiness,
+  mergeBusinessRecords,
+  updateBusinessRecord,
+  upsertBusinessRecord,
+  validateBusinessRegistration,
+} from "./business-registration-utils";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -44,4 +52,27 @@ test("registered business is normalized for the masterlist", () => {
   assert.equal(record.status, "For application");
   assert.equal(record.permitNumber, "Not issued");
   assert.equal(record.address, "National Road, Barangay Pawa, Matnog, Sorsogon");
+});
+
+test("editing preserves business and permit identity", () => {
+  const source = MATNOG_BUSINESS_DIRECTORY[0];
+  const values = businessRecordToRegistrationValues(source);
+  const updated = updateBusinessRecord(source, {
+    ...values,
+    tradeName: "Updated Trade Name",
+    declarationAccepted: true,
+  });
+  assert.equal(updated.id, source.id);
+  assert.equal(updated.permitNumber, source.permitNumber);
+  assert.equal(updated.status, source.status);
+  assert.equal(updated.tradeName, "Updated Trade Name");
+});
+
+test("overrides replace seeded records without duplication", () => {
+  const source = MATNOG_BUSINESS_DIRECTORY[0];
+  const override = { ...source, tradeName: "Updated Trade Name" };
+  const stored = upsertBusinessRecord([], override);
+  const merged = mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, stored);
+  assert.equal(merged.filter((record) => record.id === source.id).length, 1);
+  assert.equal(merged.find((record) => record.id === source.id)?.tradeName, "Updated Trade Name");
 });

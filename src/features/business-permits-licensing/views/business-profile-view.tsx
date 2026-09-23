@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import {
   Activity,
@@ -34,7 +35,7 @@ import styles from "../components/business-profile.module.css";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
 import type { BusinessDirectoryRecord } from "../types/business-directory";
 import { createApplicationHistory, createAuditTrail, createDocumentChecklist } from "../utils/business-profile-utils";
-import { REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
+import { mergeBusinessRecords, REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
 
 const tabs = [
   "Overview",
@@ -76,23 +77,23 @@ function StatusBadge({ value }: { value: string }) {
 
 export function BusinessProfileView({ businessId }: { businessId: string }) {
   const seededRecord = MATNOG_BUSINESS_DIRECTORY.find((item) => item.id === businessId);
+  const searchParams = useSearchParams();
   const [record, setRecord] = useState<BusinessDirectoryRecord | undefined>(seededRecord);
   const [loaded, setLoaded] = useState(Boolean(seededRecord));
   const [tab, setTab] = useState<Tab>("Overview");
 
   useEffect(() => {
-    if (seededRecord) return;
     try {
       const saved = JSON.parse(
         window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]",
       ) as BusinessDirectoryRecord[];
-      setRecord(saved.find((item) => item.id === businessId));
+      setRecord(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, saved).find((item) => item.id === businessId));
     } catch {
       window.localStorage.removeItem(REGISTERED_BUSINESSES_STORAGE_KEY);
     } finally {
       setLoaded(true);
     }
-  }, [businessId, seededRecord]);
+  }, [businessId]);
 
   const applications = useMemo(() => (record ? createApplicationHistory(record) : []), [record]);
   const documents = useMemo(() => (record ? createDocumentChecklist(record) : []), [record]);
@@ -130,6 +131,11 @@ export function BusinessProfileView({ businessId }: { businessId: string }) {
 
   return (
     <main className={styles.page}>
+      {searchParams.get("saved") ? (
+        <div className={styles.savedNotice}>
+          <CheckCircle2 size={15} /> Business record updated successfully.
+        </div>
+      ) : null}
       <div className={styles.topActions}>
         <Link className={styles.secondaryButton} href="/businesses">
           <ArrowLeft size={14} /> Business registry

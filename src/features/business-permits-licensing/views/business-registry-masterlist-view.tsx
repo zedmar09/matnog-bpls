@@ -38,7 +38,7 @@ import {
   formatPeso,
   sortBusinesses,
 } from "../utils/business-directory-utils";
-import { REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
+import { mergeBusinessRecords, REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
 
 const columns = [
   "id",
@@ -149,7 +149,7 @@ export function BusinessRegistryMasterlistView() {
       const saved = JSON.parse(
         window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]",
       ) as BusinessDirectoryRecord[];
-      if (saved.length > 0) setRecords([...saved, ...MATNOG_BUSINESS_DIRECTORY]);
+      if (saved.length > 0) setRecords(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, saved));
     } catch {
       window.localStorage.removeItem(REGISTERED_BUSINESSES_STORAGE_KEY);
     }

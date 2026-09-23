@@ -3,15 +3,19 @@ import {
   applyBploDecision,
   applyFireDecision,
   applyHealthDecision,
+  applyTreasurerAssessment,
   applyZoningDecision,
+  calculateAssessmentTotals,
   createApplicationRequirements,
   createApplicationTimeline,
+  createDefaultAssessmentFields,
   createOfficeReviews,
   createProcessingGates,
   resolveApplicationRecord,
   validateBploDecision,
   validateFireDecision,
   validateHealthDecision,
+  validateTreasurerAssessment,
   validateZoningDecision,
 } from "./application-detail-utils";
 import assert from "node:assert/strict";
@@ -199,4 +203,57 @@ test("fire correction return requires a reason and selected requirement", () => 
   assert.ok(validateFireDecision("return", { ...completeFireFields, remarks: "Short" }, []));
   assert.ok(validateFireDecision("return", completeFireFields, []));
   assert.equal(validateFireDecision("return", completeFireFields, ["REQ-1"]), "");
+});
+
+test("Treasurer posting calculates the total and routes to payment confirmation", () => {
+  const record = { ...MATNOG_APPLICATION_DIRECTORY[0], assessmentAmount: 0, paymentStatus: "Not assessed" as const };
+  const fields = createDefaultAssessmentFields(record);
+  const expected = calculateAssessmentTotals(fields).total;
+  const result = applyTreasurerAssessment(record, undefined, "post", fields, []);
+  assert.equal(result.record.assessmentAmount, expected);
+  assert.equal(result.record.paymentStatus, "Pending payment");
+  assert.equal(result.record.currentStage, "Payment confirmation");
+  assert.equal(result.override.status, "Approved");
+});
+
+test("Treasurer posting validates chronology and manual adjustments", () => {
+  const fields = createDefaultAssessmentFields(MATNOG_APPLICATION_DIRECTORY[0]);
+  assert.ok(validateTreasurerAssessment("post", { ...fields, dueDate: "2026-09-20" }, []));
+  assert.ok(validateTreasurerAssessment("post", { ...fields, adjustment: -500 }, []));
+  assert.equal(
+    validateTreasurerAssessment(
+      "post",
+      { ...fields, adjustment: -500, adjustmentReason: "Approved correction to an overcomputed regulatory charge." },
+      [],
+    ),
+    "",
+  );
+});
+
+test("Zero assessment requires an exemption and advances past payment", () => {
+  const record = { ...MATNOG_APPLICATION_DIRECTORY[0], assessmentAmount: 0, paymentStatus: "Not assessed" as const };
+  const fields = {
+    ...createDefaultAssessmentFields(record),
+    assessmentType: "Zero / exempt" as const,
+    exemptionBasis: "Approved closure exemption under the configured municipal revenue-code rule.",
+    remarks: "No collectible balance remains after Treasurer reconciliation.",
+  };
+  const result = applyTreasurerAssessment(record, undefined, "post", fields, []);
+  assert.equal(result.record.assessmentAmount, 0);
+  assert.equal(result.record.paymentStatus, "Paid");
+  assert.equal(result.record.currentStage, "Mayor's final approval");
+});
+
+test("Treasurer correction return requires a reason and selected requirement", () => {
+  const fields = { ...createDefaultAssessmentFields(MATNOG_APPLICATION_DIRECTORY[0]), remarks: "Short" };
+  assert.ok(validateTreasurerAssessment("return", fields, []));
+  assert.ok(
+    validateTreasurerAssessment("return", { ...fields, remarks: "Submit a corrected gross-receipts declaration." }, []),
+  );
+  assert.equal(
+    validateTreasurerAssessment("return", { ...fields, remarks: "Submit a corrected gross-receipts declaration." }, [
+      "REQ-1",
+    ]),
+    "",
+  );
 });

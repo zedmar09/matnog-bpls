@@ -35,6 +35,7 @@ import { ConfirmationDialog } from "@/shared/components/confirmation-dialog";
 import styles from "../components/application-detail.module.css";
 import { FireReviewActions, type FireReviewFields } from "../components/fire-review-actions";
 import { HealthReviewActions, type HealthReviewFields } from "../components/health-review-actions";
+import { TreasurerAssessmentActions } from "../components/treasurer-assessment-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
 import type {
@@ -45,6 +46,8 @@ import type {
   FireReviewOverride,
   HealthReviewAction,
   HealthReviewOverride,
+  TreasurerAssessmentAction,
+  TreasurerAssessmentOverride,
   ZoningReviewAction,
   ZoningReviewOverride,
 } from "../types/application-detail";
@@ -53,11 +56,15 @@ import {
   applyBploDecision,
   applyFireDecision,
   applyHealthDecision,
+  applyTreasurerAssessment,
   applyZoningDecision,
   BPLO_REVIEW_ACTOR,
   BPLO_REVIEW_STORAGE_KEY,
+  calculateAssessmentFeeItems,
+  calculateAssessmentTotals,
   createApplicationRequirements,
   createApplicationTimeline,
+  createDefaultAssessmentFields,
   createOfficeReviews,
   createProcessingGates,
   FIRE_REVIEW_ACTOR,
@@ -67,11 +74,16 @@ import {
   mergeBploReviewOverrides,
   mergeFireReviewOverrides,
   mergeHealthReviewOverrides,
+  mergeTreasurerAssessmentOverrides,
   mergeZoningReviewOverrides,
   resolveApplicationRecord,
+  TREASURER_ASSESSMENT_ACTOR,
+  TREASURER_ASSESSMENT_STORAGE_KEY,
+  type TreasurerAssessmentFields,
   validateBploDecision,
   validateFireDecision,
   validateHealthDecision,
+  validateTreasurerAssessment,
   validateZoningDecision,
   ZONING_REVIEW_ACTOR,
   ZONING_REVIEW_STORAGE_KEY,
@@ -90,8 +102,8 @@ function formatDate(value: string, includeTime = false) {
   }).format(new Date(source.length === 10 ? `${source}T00:00:00` : source));
 }
 
-function formatPeso(value: number) {
-  return value
+function formatPeso(value: number, showZero = false) {
+  return value || showZero
     ? new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(value)
     : "—";
 }
@@ -128,6 +140,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [zoningOverride, setZoningOverride] = useState<ZoningReviewOverride>();
   const [healthOverride, setHealthOverride] = useState<HealthReviewOverride>();
   const [fireOverride, setFireOverride] = useState<FireReviewOverride>();
+  const [treasurerOverride, setTreasurerOverride] = useState<TreasurerAssessmentOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -167,6 +180,15 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [fireAffectedRequirementIds, setFireAffectedRequirementIds] = useState<string[]>([]);
   const [fireError, setFireError] = useState("");
   const [pendingFireAction, setPendingFireAction] = useState<Exclude<FireReviewAction, "note"> | null>(null);
+  const [treasurerFields, setTreasurerFields] = useState<TreasurerAssessmentFields>(() =>
+    createDefaultAssessmentFields(seededRecord ?? MATNOG_APPLICATION_DIRECTORY[0]),
+  );
+  const [treasurerAffectedRequirementIds, setTreasurerAffectedRequirementIds] = useState<string[]>([]);
+  const [treasurerError, setTreasurerError] = useState("");
+  const [pendingTreasurerAction, setPendingTreasurerAction] = useState<Exclude<
+    TreasurerAssessmentAction,
+    "save"
+  > | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -232,6 +254,32 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         });
         setFireAffectedRequirementIds(currentFireOverride.affectedRequirementIds);
       }
+      const treasurerOverrides = JSON.parse(
+        window.localStorage.getItem(TREASURER_ASSESSMENT_STORAGE_KEY) ?? "[]",
+      ) as TreasurerAssessmentOverride[];
+      const currentTreasurerOverride = treasurerOverrides.find(
+        (item) => item.applicationId === applicationId.toUpperCase(),
+      );
+      setTreasurerOverride(currentTreasurerOverride);
+      if (currentTreasurerOverride) {
+        setTreasurerFields({
+          assessmentReference: currentTreasurerOverride.assessmentReference,
+          ruleVersion: currentTreasurerOverride.ruleVersion,
+          assessmentDate: currentTreasurerOverride.assessmentDate,
+          dueDate: currentTreasurerOverride.dueDate,
+          basisType: currentTreasurerOverride.basisType,
+          declaredAmount: currentTreasurerOverride.declaredAmount,
+          assessmentType: currentTreasurerOverride.assessmentType,
+          exemptionBasis: currentTreasurerOverride.exemptionBasis,
+          feeItems: currentTreasurerOverride.feeItems,
+          discount: currentTreasurerOverride.discount,
+          surcharge: currentTreasurerOverride.surcharge,
+          adjustment: currentTreasurerOverride.adjustment,
+          adjustmentReason: currentTreasurerOverride.adjustmentReason,
+          remarks: currentTreasurerOverride.remarks,
+        });
+        setTreasurerAffectedRequirementIds(currentTreasurerOverride.affectedRequirementIds);
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -244,21 +292,44 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const business = businesses.find((item) => item.id === record?.businessId);
   const requirements = useMemo(
     () =>
-      record ? createApplicationRequirements(record, bploOverride, zoningOverride, healthOverride, fireOverride) : [],
-    [record, bploOverride, zoningOverride, healthOverride, fireOverride],
+      record
+        ? createApplicationRequirements(
+            record,
+            bploOverride,
+            zoningOverride,
+            healthOverride,
+            fireOverride,
+            treasurerOverride,
+          )
+        : [],
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride],
   );
   const reviews = useMemo(
-    () => (record ? createOfficeReviews(record, bploOverride, zoningOverride, healthOverride, fireOverride) : []),
-    [record, bploOverride, zoningOverride, healthOverride, fireOverride],
+    () =>
+      record
+        ? createOfficeReviews(record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride)
+        : [],
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride],
   );
   const gates = useMemo(
     () => (record ? createProcessingGates(record, requirements, reviews) : []),
     [record, requirements, reviews],
   );
   const timeline = useMemo(
-    () => (record ? createApplicationTimeline(record, bploOverride, zoningOverride, healthOverride, fireOverride) : []),
-    [record, bploOverride, zoningOverride, healthOverride, fireOverride],
+    () =>
+      record
+        ? createApplicationTimeline(
+            record,
+            bploOverride,
+            zoningOverride,
+            healthOverride,
+            fireOverride,
+            treasurerOverride,
+          )
+        : [],
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride],
   );
+  const assessmentTotals = useMemo(() => calculateAssessmentTotals(treasurerFields), [treasurerFields]);
 
   function requestDecision(action: BploReviewAction) {
     const error = validateBploDecision(action, remarks, affectedRequirementIds);
@@ -505,6 +576,108 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     );
   }
 
+  function updateTreasurerField<K extends keyof TreasurerAssessmentFields>(
+    field: K,
+    value: TreasurerAssessmentFields[K],
+  ) {
+    setTreasurerFields((current) => ({ ...current, [field]: value }));
+    setTreasurerError("");
+  }
+
+  function updateAssessmentFeeItem(id: string, field: "label" | "amount", value: string) {
+    setTreasurerFields((current) => ({
+      ...current,
+      feeItems: current.feeItems.map((item) =>
+        item.id === id ? { ...item, [field]: field === "amount" ? Number(value) : value } : item,
+      ),
+    }));
+    setTreasurerError("");
+  }
+
+  function addAssessmentFeeItem() {
+    setTreasurerFields((current) => ({
+      ...current,
+      feeItems: [...current.feeItems, { id: `custom-${Date.now()}`, label: "Custom local charge", amount: 0 }],
+    }));
+    setTreasurerError("");
+  }
+
+  function removeAssessmentFeeItem(id: string) {
+    setTreasurerFields((current) => ({
+      ...current,
+      feeItems: current.feeItems.filter((item) => item.id !== id),
+    }));
+    setTreasurerError("");
+  }
+
+  function recalculateAssessment() {
+    setTreasurerFields((current) => ({
+      ...current,
+      feeItems: calculateAssessmentFeeItems(current.declaredAmount),
+    }));
+    setTreasurerError("");
+    setNotice("Assessment line items recalculated from the declared tax basis.");
+  }
+
+  function toggleTreasurerRequirement(id: string) {
+    setTreasurerAffectedRequirementIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+    setTreasurerError("");
+  }
+
+  function requestTreasurerAction(action: TreasurerAssessmentAction) {
+    const error = validateTreasurerAssessment(action, treasurerFields, treasurerAffectedRequirementIds);
+    if (error) {
+      setTreasurerError(error);
+      return;
+    }
+    setTreasurerError("");
+    if (action === "save") commitTreasurerAction(action);
+    else setPendingTreasurerAction(action);
+  }
+
+  function commitTreasurerAction(action: TreasurerAssessmentAction) {
+    if (!record) return;
+    const result = applyTreasurerAssessment(
+      record,
+      treasurerOverride,
+      action,
+      treasurerFields,
+      treasurerAffectedRequirementIds,
+    );
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let treasurerOverrides: TreasurerAssessmentOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      treasurerOverrides = JSON.parse(window.localStorage.getItem(TREASURER_ASSESSMENT_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      treasurerOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      TREASURER_ASSESSMENT_STORAGE_KEY,
+      JSON.stringify(mergeTreasurerAssessmentOverrides(treasurerOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setTreasurerOverride(result.override);
+    setPendingTreasurerAction(null);
+    setTreasurerError("");
+    setNotice(
+      action === "post"
+        ? result.record.paymentStatus === "Paid"
+          ? "Zero assessment posted and routed to Mayor's Final Approval."
+          : "Assessment posted and routed to Payment Confirmation."
+        : action === "return"
+          ? "Treasurer assessment returned for correction."
+          : "Assessment draft saved to the audit trail.",
+    );
+  }
+
   if (!loaded)
     return (
       <main className={styles.page}>
@@ -541,6 +714,10 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     !terminal &&
     ["Approved", "Not applicable"].includes(reviews[2]?.status) &&
     !["Approved", "Not applicable"].includes(reviews[3]?.status);
+  const treasurerReviewActive =
+    !terminal &&
+    ["Approved", "Not applicable"].includes(reviews[3]?.status) &&
+    !["Approved", "Not applicable"].includes(reviews[4]?.status);
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -559,7 +736,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          {fireReviewActive ? (
+          {treasurerReviewActive ? (
+            <Banknote size={14} />
+          ) : fireReviewActive ? (
             <Flame size={14} />
           ) : healthReviewActive ? (
             <HeartPulse size={14} />
@@ -568,15 +747,17 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           ) : (
             <ShieldCheck size={14} />
           )}
-          {fireReviewActive
-            ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
-            : healthReviewActive
-              ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
-              : zoningReviewActive
-                ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
-                : bploReviewActive
-                  ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
-                  : `Current office · ${record.assignedOfficer}`}
+          {treasurerReviewActive
+            ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
+            : fireReviewActive
+              ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
+              : healthReviewActive
+                ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
+                : zoningReviewActive
+                  ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+                  : bploReviewActive
+                    ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+                    : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -637,7 +818,8 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         <article>
           <Banknote size={18} />
           <span>
-            Assessment<strong>{formatPeso(record.assessmentAmount)}</strong>
+            Assessment
+            <strong>{formatPeso(record.assessmentAmount, treasurerOverride?.status === "Approved")}</strong>
             <small>{record.paymentStatus}</small>
           </span>
         </article>
@@ -753,7 +935,8 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                     (index === 0 && bploReviewActive) ||
                     (index === 1 && zoningReviewActive) ||
                     (index === 2 && healthReviewActive) ||
-                    (index === 3 && fireReviewActive)
+                    (index === 3 && fireReviewActive) ||
+                    (index === 4 && treasurerReviewActive)
                       ? styles.activeReviewCard
                       : ""
                   }
@@ -977,6 +1160,22 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                       onAction={requestFireDecision}
                     />
                   ) : null}
+                  {index === 4 && treasurerReviewActive ? (
+                    <TreasurerAssessmentActions
+                      fields={treasurerFields}
+                      totals={assessmentTotals}
+                      requirements={requirements}
+                      affectedRequirementIds={treasurerAffectedRequirementIds}
+                      error={treasurerError}
+                      onFieldChange={updateTreasurerField}
+                      onFeeItemChange={updateAssessmentFeeItem}
+                      onAddFeeItem={addAssessmentFeeItem}
+                      onRemoveFeeItem={removeAssessmentFeeItem}
+                      onToggleRequirement={toggleTreasurerRequirement}
+                      onRecalculate={recalculateAssessment}
+                      onAction={requestTreasurerAction}
+                    />
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -1054,28 +1253,50 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             </header>
             <div className={styles.amountBox}>
               <span>Total assessment</span>
-              <strong>{formatPeso(record.assessmentAmount)}</strong>
+              <strong>{formatPeso(record.assessmentAmount, treasurerOverride?.status === "Approved")}</strong>
               <StatusBadge value={record.paymentStatus} />
             </div>
-            {record.assessmentAmount ? (
+            {treasurerOverride?.status === "Approved" ? (
+              <dl className={styles.paymentBreakdown}>
+                {treasurerOverride.assessmentType === "Zero / exempt" ? (
+                  <div>
+                    <dt>Exemption basis</dt>
+                    <dd>{treasurerOverride.exemptionBasis}</dd>
+                  </div>
+                ) : (
+                  treasurerOverride.feeItems.map((item) => (
+                    <div key={item.id}>
+                      <dt>{item.label}</dt>
+                      <dd>{formatPeso(item.amount, true)}</dd>
+                    </div>
+                  ))
+                )}
+                {treasurerOverride.discount ? (
+                  <div>
+                    <dt>Discount</dt>
+                    <dd>− {formatPeso(treasurerOverride.discount, true)}</dd>
+                  </div>
+                ) : null}
+                {treasurerOverride.surcharge || treasurerOverride.adjustment ? (
+                  <div>
+                    <dt>Surcharge / adjustments</dt>
+                    <dd>{formatPeso(treasurerOverride.surcharge + treasurerOverride.adjustment, true)}</dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>Assessment reference</dt>
+                  <dd>{treasurerOverride.assessmentReference}</dd>
+                </div>
+                <div>
+                  <dt>Payment due</dt>
+                  <dd>{formatDate(treasurerOverride.dueDate)}</dd>
+                </div>
+              </dl>
+            ) : record.assessmentAmount ? (
               <dl className={styles.paymentBreakdown}>
                 <div>
-                  <dt>Business tax</dt>
-                  <dd>{formatPeso(Math.round(record.assessmentAmount * 0.63))}</dd>
-                </div>
-                <div>
-                  <dt>Regulatory fees</dt>
-                  <dd>{formatPeso(Math.round(record.assessmentAmount * 0.25))}</dd>
-                </div>
-                <div>
-                  <dt>Other local charges</dt>
-                  <dd>
-                    {formatPeso(
-                      record.assessmentAmount -
-                        Math.round(record.assessmentAmount * 0.63) -
-                        Math.round(record.assessmentAmount * 0.25),
-                    )}
-                  </dd>
+                  <dt>Seeded assessment</dt>
+                  <dd>{formatPeso(record.assessmentAmount)}</dd>
                 </div>
               </dl>
             ) : (
@@ -1231,6 +1452,25 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         destructive={pendingFireAction === "return"}
         onConfirm={() => {
           if (pendingFireAction) commitFireDecision(pendingFireAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingTreasurerAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingTreasurerAction(null);
+        }}
+        title={pendingTreasurerAction === "post" ? "Post Treasurer assessment?" : "Return assessment for correction?"}
+        description={
+          pendingTreasurerAction === "post"
+            ? treasurerFields.assessmentType === "Zero / exempt"
+              ? "This posts a zero assessment, satisfies the payment gate through the recorded exemption, and routes the application to Mayor's Final Approval."
+              : `This posts ${formatPeso(assessmentTotals.total, true)} as payable and routes the application to Payment Confirmation.`
+            : `This returns ${treasurerAffectedRequirementIds.length} selected ${treasurerAffectedRequirementIds.length === 1 ? "requirement" : "requirements"} to the applicant while keeping the case assigned to the Treasurer's Office.`
+        }
+        confirmLabel={pendingTreasurerAction === "post" ? "Post assessment" : "Return for correction"}
+        destructive={pendingTreasurerAction === "return"}
+        onConfirm={() => {
+          if (pendingTreasurerAction) commitTreasurerAction(pendingTreasurerAction);
         }}
       />
     </main>

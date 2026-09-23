@@ -5,6 +5,13 @@ export type BploReviewAction = "approve" | "return" | "note";
 export type ZoningReviewAction = "approve" | "return" | "not-applicable" | "note";
 export type HealthReviewAction = "approve" | "return" | "not-applicable" | "note";
 export type FireReviewAction = "approve" | "return" | "not-applicable" | "note";
+export type TreasurerAssessmentAction = "save" | "return" | "post";
+
+export type AssessmentFeeItem = {
+  id: string;
+  label: string;
+  amount: number;
+};
 
 export type ApplicationRequirementDetail = {
   id: string;
@@ -125,5 +132,35 @@ export type FireReviewOverride = {
 export type FireDecisionResult = {
   record: import("./application-directory").ApplicationDirectoryRecord;
   override: FireReviewOverride;
+  event: ApplicationTimelineEvent;
+};
+
+export type TreasurerAssessmentOverride = {
+  applicationId: string;
+  sourceStatus: import("./application-directory").ApplicationDirectoryStatus;
+  status: ApplicationReviewStatus;
+  assessmentReference: string;
+  ruleVersion: string;
+  assessmentDate: string;
+  dueDate: string;
+  basisType: string;
+  declaredAmount: number;
+  assessmentType: "Standard" | "Zero / exempt";
+  exemptionBasis: string;
+  feeItems: AssessmentFeeItem[];
+  discount: number;
+  surcharge: number;
+  adjustment: number;
+  adjustmentReason: string;
+  remarks: string;
+  affectedRequirementIds: string[];
+  actor: string;
+  updatedAt: string;
+  events: ApplicationTimelineEvent[];
+};
+
+export type TreasurerAssessmentResult = {
+  record: import("./application-directory").ApplicationDirectoryRecord;
+  override: TreasurerAssessmentOverride;
   event: ApplicationTimelineEvent;
 };

@@ -4,6 +4,7 @@ import type {
   ApplicationRequirementDetail,
   ApplicationReviewStatus,
   ApplicationTimelineEvent,
+  AssessmentFeeItem,
   BploDecisionResult,
   BploReviewAction,
   BploReviewOverride,
@@ -13,6 +14,9 @@ import type {
   HealthDecisionResult,
   HealthReviewAction,
   HealthReviewOverride,
+  TreasurerAssessmentAction,
+  TreasurerAssessmentOverride,
+  TreasurerAssessmentResult,
   ZoningDecisionResult,
   ZoningReviewAction,
   ZoningReviewOverride,
@@ -62,6 +66,9 @@ export const FIRE_SAFETY_CONTROLS = [
   "Electrical safety",
   "Emergency plan",
 ] as const;
+export const TREASURER_ASSESSMENT_STORAGE_KEY = "matnog-bpls-treasurer-assessment-overrides-v1";
+export const TREASURER_ASSESSMENT_ACTOR = "Rogelio M. Funes";
+export const DEFAULT_ASSESSMENT_RULE = "Matnog Revenue Code 2025 · Configured sample";
 
 function sequence(record: ApplicationDirectoryRecord) {
   const digits = Number(record.id.replace(/\D/g, "").slice(-5));
@@ -85,6 +92,7 @@ export function createApplicationRequirements(
   zoningOverride?: ZoningReviewOverride,
   healthOverride?: HealthReviewOverride,
   fireOverride?: FireReviewOverride,
+  treasurerOverride?: TreasurerAssessmentOverride,
 ): ApplicationRequirementDetail[] {
   const seed = sequence(record);
   const total = Math.min(REQUIREMENTS.length, Math.max(1, record.requirementsTotal));
@@ -114,6 +122,11 @@ export function createApplicationRequirements(
     if (
       fireOverride?.status === "For correction" &&
       fireOverride.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
+    )
+      status = "Returned";
+    if (
+      treasurerOverride?.status === "For correction" &&
+      treasurerOverride.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
     )
       status = "Returned";
     return {
@@ -154,6 +167,7 @@ export function createOfficeReviews(
   zoningOverride?: ZoningReviewOverride,
   healthOverride?: HealthReviewOverride,
   fireOverride?: FireReviewOverride,
+  treasurerOverride?: TreasurerAssessmentOverride,
 ): ApplicationOfficeReview[] {
   let statuses: ApplicationReviewStatus[] = reviewStatuses(record);
   if (override?.status === "Approved")
@@ -186,6 +200,18 @@ export function createOfficeReviews(
       "Not started",
     ];
   }
+  if (treasurerOverride) {
+    const nextStatus =
+      treasurerOverride.status === "Approved" && record.paymentStatus === "Paid" ? "In review" : "Not started";
+    statuses = [
+      "Approved",
+      zoningOverride?.status === "Not applicable" ? "Not applicable" : "Approved",
+      healthOverride?.status === "Not applicable" ? "Not applicable" : "Approved",
+      fireOverride?.status === "Not applicable" ? "Not applicable" : "Approved",
+      treasurerOverride.status,
+      nextStatus,
+    ];
+  }
   const seed = sequence(record);
   return REVIEW_OFFICES.map(([office, assignee], index) => {
     const officeOverride =
@@ -197,7 +223,9 @@ export function createOfficeReviews(
             ? healthOverride
             : index === 3
               ? fireOverride
-              : undefined;
+              : index === 4
+                ? treasurerOverride
+                : undefined;
     const status = officeOverride?.status ?? statuses[index];
     return {
       id: `REV-${record.id.slice(-5)}-${index + 1}`,
@@ -230,8 +258,13 @@ export function createProcessingGates(
   reviews: readonly ApplicationOfficeReview[],
 ): ApplicationProcessingGate[] {
   const requirementsComplete = requirements.every((item) => !item.mandatory || item.status === "Verified");
+  const preAssessmentReviewsComplete = reviews
+    .slice(0, 4)
+    .every((item) => ["Approved", "Not applicable"].includes(item.status));
   const reviewsComplete = reviews.every((item) => ["Approved", "Not applicable"].includes(item.status));
-  const assessed = record.assessmentAmount > 0;
+  const assessed =
+    ["Approved", "Not applicable"].includes(reviews[4]?.status) &&
+    (record.assessmentAmount > 0 || record.paymentStatus === "Paid");
   const paid = record.paymentStatus === "Paid";
   return [
     {
@@ -249,7 +282,7 @@ export function createProcessingGates(
     {
       id: "assessment",
       label: "Assessment",
-      status: assessed ? "Complete" : reviewsComplete ? "In progress" : "Pending",
+      status: assessed ? "Complete" : preAssessmentReviewsComplete ? "In progress" : "Pending",
       detail: assessed
         ? `Assessment posted for ₱${record.assessmentAmount.toLocaleString("en-PH")}`
         : "Treasurer assessment not yet posted",
@@ -281,6 +314,7 @@ export function createApplicationTimeline(
   zoningOverride?: ZoningReviewOverride,
   healthOverride?: HealthReviewOverride,
   fireOverride?: FireReviewOverride,
+  treasurerOverride?: TreasurerAssessmentOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -329,6 +363,7 @@ export function createApplicationTimeline(
       ...(zoningOverride?.events ?? []),
       ...(healthOverride?.events ?? []),
       ...(fireOverride?.events ?? []),
+      ...(treasurerOverride?.events ?? []),
     ];
   }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
@@ -348,6 +383,7 @@ export function createApplicationTimeline(
     ...(zoningOverride?.events ?? []),
     ...(healthOverride?.events ?? []),
     ...(fireOverride?.events ?? []),
+    ...(treasurerOverride?.events ?? []),
   ];
 }
 
@@ -759,5 +795,181 @@ export function applyFireDecision(
 }
 
 export function mergeFireReviewOverrides(overrides: readonly FireReviewOverride[], next: FireReviewOverride) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+export type TreasurerAssessmentFields = Pick<
+  TreasurerAssessmentOverride,
+  | "assessmentReference"
+  | "ruleVersion"
+  | "assessmentDate"
+  | "dueDate"
+  | "basisType"
+  | "declaredAmount"
+  | "assessmentType"
+  | "exemptionBasis"
+  | "feeItems"
+  | "discount"
+  | "surcharge"
+  | "adjustment"
+  | "adjustmentReason"
+  | "remarks"
+>;
+
+export function calculateAssessmentFeeItems(declaredAmount: number): AssessmentFeeItem[] {
+  const safeAmount = Math.max(0, declaredAmount);
+  return [
+    { id: "business-tax", label: "Business tax", amount: Math.round(safeAmount * 0.01) },
+    { id: "mayors-permit", label: "Mayor's permit fee", amount: 1_200 },
+    { id: "sanitary", label: "Sanitary inspection fee", amount: 300 },
+    { id: "fire", label: "Fire inspection fee", amount: 500 },
+    { id: "environmental", label: "Garbage / environmental fee", amount: 600 },
+    { id: "signage", label: "Signage fee", amount: 250 },
+    { id: "other", label: "Other local charges", amount: 0 },
+  ];
+}
+
+export function createDefaultAssessmentFields(record: ApplicationDirectoryRecord): TreasurerAssessmentFields {
+  const declaredAmount = 650_000 + (sequence(record) % 20) * 25_000;
+  return {
+    assessmentReference: `ASM-2026-${record.id.slice(-5)}`,
+    ruleVersion: DEFAULT_ASSESSMENT_RULE,
+    assessmentDate: "2026-09-23",
+    dueDate: "2026-10-23",
+    basisType: record.type === "New" ? "Declared capital investment" : "Prior-year gross receipts",
+    declaredAmount,
+    assessmentType: "Standard",
+    exemptionBasis: "",
+    feeItems: calculateAssessmentFeeItems(declaredAmount),
+    discount: 0,
+    surcharge: 0,
+    adjustment: 0,
+    adjustmentReason: "",
+    remarks: "",
+  };
+}
+
+export function calculateAssessmentTotals(fields: TreasurerAssessmentFields) {
+  if (fields.assessmentType === "Zero / exempt") {
+    return { subtotal: 0, deductions: 0, additions: 0, total: 0 };
+  }
+  const subtotal = fields.feeItems.reduce((sum, item) => sum + Math.max(0, item.amount), 0);
+  const deductions = Math.max(0, fields.discount);
+  const additions = Math.max(0, fields.surcharge) + fields.adjustment;
+  return { subtotal, deductions, additions, total: Math.max(0, subtotal - deductions + additions) };
+}
+
+export function validateTreasurerAssessment(
+  action: TreasurerAssessmentAction,
+  fields: TreasurerAssessmentFields,
+  affectedRequirementIds: readonly string[],
+) {
+  if (action === "save") return "";
+  if (action === "return" && fields.remarks.trim().length < 10)
+    return "Enter a correction reason of at least 10 characters.";
+  if (action === "return" && affectedRequirementIds.length === 0) return "Select at least one affected requirement.";
+  if (action === "post") {
+    if (!fields.assessmentReference.trim()) return "Enter an assessment reference number.";
+    if (!fields.ruleVersion.trim()) return "Select or enter the applicable revenue-code rule version.";
+    if (!fields.assessmentDate) return "Enter the assessment date.";
+    if (!fields.dueDate) return "Enter the payment due date.";
+    if (fields.dueDate < fields.assessmentDate) return "The payment due date cannot be before the assessment date.";
+    if (!fields.basisType.trim()) return "Select the assessment basis.";
+    if (fields.declaredAmount < 0) return "The declared assessment basis cannot be negative.";
+    if (fields.assessmentType === "Zero / exempt") {
+      if (!fields.exemptionBasis.trim()) return "Enter the legal or administrative exemption basis.";
+      if (fields.remarks.trim().length < 10) return "Enter a zero-assessment justification of at least 10 characters.";
+    } else {
+      if (fields.feeItems.length === 0) return "Add at least one assessment line item.";
+      if (fields.feeItems.some((item) => !item.label.trim() || item.amount < 0))
+        return "Every fee line requires a label and a non-negative amount.";
+      if (calculateAssessmentTotals(fields).total <= 0)
+        return "The standard assessment total must be greater than zero.";
+    }
+    if (fields.discount < 0 || fields.surcharge < 0) return "Discounts and surcharges cannot be negative.";
+    if (fields.adjustment !== 0 && fields.adjustmentReason.trim().length < 10)
+      return "Explain the manual adjustment using at least 10 characters.";
+  }
+  return "";
+}
+
+export function applyTreasurerAssessment(
+  record: ApplicationDirectoryRecord,
+  current: TreasurerAssessmentOverride | undefined,
+  action: TreasurerAssessmentAction,
+  fields: TreasurerAssessmentFields,
+  affectedRequirementIds: string[],
+  occurredAt = "2026-09-23 19:15",
+): TreasurerAssessmentResult {
+  const totals = calculateAssessmentTotals(fields);
+  const status: ApplicationReviewStatus =
+    action === "post" ? "Approved" : action === "return" ? "For correction" : (current?.status ?? "In review");
+  const labels: Record<TreasurerAssessmentAction, string> = {
+    save: "Treasurer assessment draft saved",
+    return: "Treasurer assessment returned for correction",
+    post: fields.assessmentType === "Zero / exempt" ? "Zero assessment posted" : "Treasurer assessment posted",
+  };
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-TREASURER-${(current?.events.length ?? 0) + 1}`,
+    action: labels[action],
+    detail:
+      action === "return"
+        ? `${fields.remarks.trim()} (${affectedRequirementIds.length} affected ${affectedRequirementIds.length === 1 ? "requirement" : "requirements"}).`
+        : action === "post"
+          ? `${fields.assessmentReference.trim()} posted for ₱${totals.total.toLocaleString("en-PH")} under ${fields.ruleVersion.trim()}.`
+          : "Assessment inputs and fee lines saved as a working draft.",
+    actor: TREASURER_ASSESSMENT_ACTOR,
+    office: "Municipal Treasurer's Office",
+    occurredAt,
+  };
+  const override: TreasurerAssessmentOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    status,
+    ...fields,
+    assessmentReference: fields.assessmentReference.trim(),
+    ruleVersion: fields.ruleVersion.trim(),
+    basisType: fields.basisType.trim(),
+    exemptionBasis: fields.exemptionBasis.trim(),
+    feeItems: fields.feeItems.map((item) => ({ ...item, label: item.label.trim() })),
+    adjustmentReason: fields.adjustmentReason.trim(),
+    remarks:
+      fields.remarks.trim() ||
+      (action === "post" ? "Assessment posted with no unresolved Treasurer findings." : (current?.remarks ?? "")),
+    affectedRequirementIds: action === "return" ? [...affectedRequirementIds] : [],
+    actor: TREASURER_ASSESSMENT_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const zeroAssessment = fields.assessmentType === "Zero / exempt";
+  const updatedRecord: ApplicationDirectoryRecord =
+    action === "post"
+      ? {
+          ...record,
+          status: "Under review",
+          currentStage: zeroAssessment ? "Mayor's final approval" : "Payment confirmation",
+          assignedOfficer: zeroAssessment ? "Roberto P. Hababag" : TREASURER_ASSESSMENT_ACTOR,
+          assessmentAmount: totals.total,
+          paymentStatus: zeroAssessment ? "Paid" : "Pending payment",
+          updatedAt: occurredAt,
+        }
+      : action === "return"
+        ? {
+            ...record,
+            status: "For correction",
+            currentStage: "Treasurer assessment",
+            assignedOfficer: TREASURER_ASSESSMENT_ACTOR,
+            paymentStatus: "Not assessed",
+            assessmentAmount: 0,
+            updatedAt: occurredAt,
+          }
+        : { ...record, updatedAt: occurredAt };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergeTreasurerAssessmentOverrides(
+  overrides: readonly TreasurerAssessmentOverride[],
+  next: TreasurerAssessmentOverride,
+) {
   return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
 }

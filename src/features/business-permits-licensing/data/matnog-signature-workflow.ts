@@ -4,6 +4,7 @@ import { MATNOG_APPLICATION_DIRECTORY } from "./matnog-application-directory";
 import { seededSignatureStatus } from "./signature-seed-rules";
 
 const PROVIDERS = ["DocuSign", "DocuSign", "Manual digital signature"] as const;
+const RELEASE_CHANNELS = ["Digital email", "Onsite pickup", "Printed counter release"] as const;
 
 function pad(value: number) {
   return String(value).padStart(2, "0");
@@ -69,6 +70,8 @@ function createRelease(
   const provider = PROVIDERS[queueIndex % PROVIDERS.length];
   const envelopeReference = `DSE-${application.fiscalPeriod}-${application.id.slice(-5)}-V${document.versions.at(-1)?.version ?? 1}`;
   const exception = ["Declined", "Failed"].includes(signatureStatus);
+  const preparedForRelease = signatureStatus === "Signed" && queueIndex % 2 === 1;
+  const recipientDetailsAvailable = preparedForRelease || (signatureStatus === "Signed" && queueIndex % 4 === 0);
   const notes =
     signatureStatus === "Declined"
       ? "Signer declined because the delegated signatory authority requires correction."
@@ -101,15 +104,20 @@ function createRelease(
         notes,
       },
     ],
-    releaseChannel: "Digital email",
+    releaseChannel:
+      signatureStatus === "Signed" ? RELEASE_CHANNELS[queueIndex % RELEASE_CHANNELS.length] : "Digital email",
     releaseDate: "2026-09-23",
     recipientName: application.ownerName,
-    recipientIdentification: "",
-    recipientContact: "",
+    recipientIdentification: recipientDetailsAvailable ? `PhilSys ID ending ${application.id.slice(-4)}` : "",
+    recipientContact: recipientDetailsAvailable ? `0917 55${application.id.slice(-4)}` : "",
     releasingOfficer: "Maricel A. Gacosta",
     acknowledgmentReference: `ACK-${application.fiscalPeriod}-${application.id.slice(-5)}`,
-    acknowledgmentConfirmed: false,
-    releaseNotes: exception ? "Release remains locked until a successful signature is recorded." : "",
+    acknowledgmentConfirmed: preparedForRelease,
+    releaseNotes: exception
+      ? "Release remains locked until a successful signature is recorded."
+      : preparedForRelease
+        ? "Recipient authority and acknowledgment evidence were prevalidated by BPLO staff."
+        : "",
     verificationStatus: "Pending",
     actor: "Maricel A. Gacosta",
     updatedAt: completedDate ? `${completedDate} 14:10` : `${sentDate} 09:30`,

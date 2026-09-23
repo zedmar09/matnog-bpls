@@ -31,6 +31,7 @@ export const APPLICATION_STAGES = [
 
 const TYPES: readonly ApplicationDirectoryType[] = ["Renewal", "Renewal", "New", "Amendment", "Renewal", "Closure"];
 const FINAL_APPROVAL_TYPES: readonly ApplicationDirectoryType[] = ["Renewal", "New", "Amendment", "Closure"];
+const SIGNATURE_QUEUE_TYPES: readonly ApplicationDirectoryType[] = ["Renewal", "Closure", "New", "Amendment"];
 const STATUSES: readonly ApplicationDirectoryStatus[] = [
   "Under review",
   "Submitted",
@@ -63,7 +64,9 @@ function createApplication(index: number): ApplicationDirectoryRecord {
   const signatureStatus = signatureQueueIndex >= 0 ? seededSignatureStatus(signatureQueueIndex) : undefined;
   const type = finalApproval
     ? FINAL_APPROVAL_TYPES[Math.floor(index / 8) % FINAL_APPROVAL_TYPES.length]
-    : generatedType;
+    : signatureStatus
+      ? SIGNATURE_QUEUE_TYPES[signatureQueueIndex % SIGNATURE_QUEUE_TYPES.length]
+      : generatedType;
   const fiscalPeriod = type === "Renewal" && index % 3 === 0 ? "2027" : "2026";
   const updatedDay = Math.max(3 + (index % 20), month === 9 ? day : 1);
   const requirementsTotal = 6 + (index % 4);
@@ -121,7 +124,8 @@ function createApplication(index: number): ApplicationDirectoryRecord {
         : signatureStatus
           ? `MATNOG-${type === "Closure" ? "CC" : "BP"}-${fiscalPeriod}-${pad(300 + sequence, 5)}`
           : "Pending",
-    priority: index % 13 === 0 ? "Urgent" : "Normal",
+    priority:
+      (signatureStatus === "Signed" && signatureQueueIndex % 12 === 9) || index % 13 === 0 ? "Urgent" : "Normal",
     updatedAt: `2026-09-${pad(updatedDay)} ${pad(8 + (index % 9))}:${index % 2 === 0 ? "20" : "45"}`,
   };
 }

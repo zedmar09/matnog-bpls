@@ -4,6 +4,7 @@ export const SEEDED_SIGNATURE_STATUSES: readonly PermitSignatureStatus[] = [
   "Pending",
   "Sent",
   "Signed",
+  "Signed",
   "Declined",
   "Failed",
 ];

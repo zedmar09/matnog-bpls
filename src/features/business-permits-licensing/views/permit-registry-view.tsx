@@ -78,6 +78,9 @@ function SortHeading({
 function RecordActions({ record }: { record: PermitRegistryRecord }) {
   return (
     <div className={styles.actions}>
+      <Link className={styles.textLink} href={`/verify/documents/${record.qrToken}`}>
+        Verify
+      </Link>
       <Link className={styles.textLink} href={`/applications/${record.applicationId}`}>
         Application
       </Link>

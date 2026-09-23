@@ -5,6 +5,8 @@ import type {
   PermitRegistryRecord,
   PermitRegistrySortKey,
   PermitRegistryStatus,
+  PublicPermitVerificationRecord,
+  PublicPermitVerificationState,
 } from "../types/permit-registry";
 
 export const EMPTY_PERMIT_REGISTRY_FILTERS: PermitRegistryFilters = {
@@ -120,5 +122,40 @@ export function summarizePermitRegistry(records: readonly PermitRegistryRecord[]
     expiring: records.filter((record) => record.status === "Expiring soon").length,
     restricted: records.filter((record) => record.status === "Suspended" || record.status === "Revoked").length,
     verified: records.filter((record) => record.verificationStatus === "Active").length,
+  };
+}
+
+export function getPublicPermitVerificationState(record: PermitRegistryRecord): PublicPermitVerificationState {
+  if (record.status === "Suspended") return "Suspended";
+  if (record.status === "Revoked") return "Revoked";
+  if (record.status === "Expired") return "Expired";
+  if (record.verificationStatus !== "Active") return "Inactive";
+  if (record.status === "Expiring soon") return "Expiring soon";
+  return "Verified";
+}
+
+export function resolvePublicPermitVerification(
+  records: readonly PermitRegistryRecord[],
+  token: string,
+): PublicPermitVerificationRecord | undefined {
+  const normalized = decodeURIComponent(token).trim().toLocaleUpperCase();
+  const record = records.find((item) => item.qrToken.toLocaleUpperCase() === normalized);
+  if (!record) return undefined;
+  return {
+    verificationState: getPublicPermitVerificationState(record),
+    documentNumber: record.documentNumber,
+    documentType: record.documentType,
+    businessName: record.businessName,
+    barangay: record.barangay,
+    fiscalPeriod: record.fiscalPeriod,
+    issueDate: record.issueDate,
+    effectiveFrom: record.effectiveFrom,
+    effectiveUntil: record.effectiveUntil,
+    documentStatus: record.status,
+    qrToken: record.qrToken,
+    version: record.version,
+    issuingAuthority: "Municipality of Matnog · Business Permits and Licensing Office",
+    signatoryTitle: "Municipal Mayor",
+    lastVerifiedAt: "2026-09-23 22:30",
   };
 }

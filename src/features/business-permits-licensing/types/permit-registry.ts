@@ -51,3 +51,29 @@ export type PermitRegistrySortKey =
   | "barangay"
   | "verificationStatus"
   | "lastUpdated";
+
+export type PublicPermitVerificationState =
+  | "Verified"
+  | "Expiring soon"
+  | "Expired"
+  | "Suspended"
+  | "Revoked"
+  | "Inactive";
+
+export type PublicPermitVerificationRecord = {
+  verificationState: PublicPermitVerificationState;
+  documentNumber: string;
+  documentType: PermitRegistryDocumentType;
+  businessName: string;
+  barangay: string;
+  fiscalPeriod: string;
+  issueDate: string;
+  effectiveFrom: string;
+  effectiveUntil: string;
+  documentStatus: PermitRegistryStatus;
+  qrToken: string;
+  version: number;
+  issuingAuthority: string;
+  signatoryTitle: string;
+  lastVerifiedAt: string;
+};

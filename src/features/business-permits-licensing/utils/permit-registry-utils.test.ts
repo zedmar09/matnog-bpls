@@ -5,6 +5,7 @@ import {
   EMPTY_PERMIT_REGISTRY_FILTERS,
   filterPermitRegistry,
   mergePermitRegistryRecords,
+  resolvePublicPermitVerification,
   sortPermitRegistry,
   summarizePermitRegistry,
 } from "./permit-registry-utils";
@@ -92,4 +93,28 @@ test("registry sorting and summary are deterministic", () => {
   const summary = summarizePermitRegistry(records);
   assert.equal(summary.total, 12);
   assert.ok(summary.verified > 0);
+});
+
+test("public verification exposes only the approved public projection", () => {
+  const record = { ...MATNOG_PERMIT_REGISTRY[1], status: "Active" as const, verificationStatus: "Active" as const };
+  const result = resolvePublicPermitVerification([record], record.qrToken.toLocaleLowerCase());
+  assert.equal(result?.verificationState, "Verified");
+  assert.equal(result?.businessName, record.businessName);
+  assert.equal("ownerName" in (result ?? {}), false);
+  assert.equal("recipientContact" in (result ?? {}), false);
+});
+
+test("public verification distinguishes restricted, expired, and unknown documents", () => {
+  const base = MATNOG_PERMIT_REGISTRY[1];
+  assert.equal(
+    resolvePublicPermitVerification([{ ...base, status: "Revoked", verificationStatus: "Inactive" }], base.qrToken)
+      ?.verificationState,
+    "Revoked",
+  );
+  assert.equal(
+    resolvePublicPermitVerification([{ ...base, status: "Expired", verificationStatus: "Active" }], base.qrToken)
+      ?.verificationState,
+    "Expired",
+  );
+  assert.equal(resolvePublicPermitVerification([base], "UNKNOWN-TOKEN"), undefined);
 });

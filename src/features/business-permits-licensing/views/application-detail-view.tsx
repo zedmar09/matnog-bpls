@@ -43,6 +43,7 @@ import { PermitSignatureRelease } from "../components/permit-signature-release";
 import { TreasurerAssessmentActions } from "../components/treasurer-assessment-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
+import { MATNOG_SIGNATURE_DOCUMENTS, MATNOG_SIGNATURE_RELEASES } from "../data/matnog-signature-workflow";
 import type {
   ApplicationGateStatus,
   BploReviewAction,
@@ -143,6 +144,7 @@ import {
   REGISTERED_BUSINESSES_STORAGE_KEY,
   upsertBusinessRecord,
 } from "../utils/business-registration-utils";
+import { mergeSignatureDocuments, mergeSignatureReleases } from "../utils/signature-queue-utils";
 
 function formatDate(value: string, includeTime = false) {
   if (!value) return "—";
@@ -422,9 +424,10 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       } else if (resolvedRecord) {
         setMayorFields(createDefaultMayorFields(resolvedRecord));
       }
-      const permitDocumentOverrides = JSON.parse(
-        window.localStorage.getItem(PERMIT_DOCUMENT_STORAGE_KEY) ?? "[]",
-      ) as PermitDocumentOverride[];
+      const permitDocumentOverrides = mergeSignatureDocuments(
+        MATNOG_SIGNATURE_DOCUMENTS,
+        JSON.parse(window.localStorage.getItem(PERMIT_DOCUMENT_STORAGE_KEY) ?? "[]") as PermitDocumentOverride[],
+      );
       const currentPermitDocument = permitDocumentOverrides.find(
         (item) => item.applicationId === applicationId.toUpperCase(),
       );
@@ -445,9 +448,10 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       } else if (resolvedRecord) {
         setPermitDocumentFields(createDefaultPermitDocumentFields(resolvedRecord, currentMayorOverride));
       }
-      const permitReleaseOverrides = JSON.parse(
-        window.localStorage.getItem(PERMIT_RELEASE_STORAGE_KEY) ?? "[]",
-      ) as PermitReleaseOverride[];
+      const permitReleaseOverrides = mergeSignatureReleases(
+        MATNOG_SIGNATURE_RELEASES,
+        JSON.parse(window.localStorage.getItem(PERMIT_RELEASE_STORAGE_KEY) ?? "[]") as PermitReleaseOverride[],
+      );
       const currentPermitRelease = permitReleaseOverrides.find(
         (item) => item.applicationId === applicationId.toUpperCase(),
       );

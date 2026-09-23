@@ -5,6 +5,7 @@ import type {
   ApplicationPaymentStatus,
 } from "../types/application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "./matnog-business-directory";
+import { seededSignatureStatus, signatureStage } from "./signature-seed-rules";
 
 export const APPLICATION_REFERENCE_DATE = "2026-09-23";
 
@@ -51,15 +52,20 @@ function createApplication(index: number): ApplicationDirectoryRecord {
   const generatedType = TYPES[index % TYPES.length];
   const status = STATUSES[index % STATUSES.length];
   const month = 5 + (index % 5);
-  const day = 2 + ((index * 7) % 25);
+  const generatedDay = 2 + ((index * 7) % 25);
+  const day = month === 9 ? Math.min(23, generatedDay) : generatedDay;
   const filedAt = `2026-${pad(month)}-${pad(day)} ${pad(8 + (index % 9))}:${index % 2 === 0 ? "15" : "40"}`;
   const targetDay = Math.min(28, day + 7 + (index % 5));
   const targetRelease = `2026-${pad(month)}-${pad(targetDay)}`;
   const seededStage = APPLICATION_STAGES[index % APPLICATION_STAGES.length];
   const finalApproval = status !== "Issued" && status !== "Closed" && seededStage === "Final approval";
+  const signatureQueueIndex = status === "Ready to issue" ? Math.floor(index / STATUSES.length) : -1;
+  const signatureStatus = signatureQueueIndex >= 0 ? seededSignatureStatus(signatureQueueIndex) : undefined;
   const type = finalApproval
     ? FINAL_APPROVAL_TYPES[Math.floor(index / 8) % FINAL_APPROVAL_TYPES.length]
     : generatedType;
+  const fiscalPeriod = type === "Renewal" && index % 3 === 0 ? "2027" : "2026";
+  const updatedDay = Math.max(3 + (index % 20), month === 9 ? day : 1);
   const requirementsTotal = 6 + (index % 4);
   const requirementsComplete = finalApproval
     ? requirementsTotal
@@ -88,19 +94,35 @@ function createApplication(index: number): ApplicationDirectoryRecord {
     riskLevel: business.riskLevel,
     type,
     status,
-    fiscalPeriod: type === "Renewal" && index % 3 === 0 ? "2027" : "2026",
+    fiscalPeriod,
     filedAt,
     targetRelease,
-    assignedOfficer: finalApproval ? "Roberto P. Hababag" : APPLICATION_OFFICERS[index % APPLICATION_OFFICERS.length],
+    assignedOfficer:
+      finalApproval || signatureStatus
+        ? finalApproval
+          ? "Roberto P. Hababag"
+          : "Maricel A. Gacosta"
+        : APPLICATION_OFFICERS[index % APPLICATION_OFFICERS.length],
     currentStage:
-      status === "Issued" || status === "Closed" ? "Completed" : finalApproval ? "Mayor's final approval" : seededStage,
+      status === "Issued" || status === "Closed"
+        ? "Completed"
+        : finalApproval
+          ? "Mayor's final approval"
+          : signatureStatus
+            ? signatureStage(signatureStatus)
+            : seededStage,
     requirementsComplete,
     requirementsTotal,
     assessmentAmount,
     paymentStatus,
-    permitNumber: status === "Issued" || status === "Closed" ? `BP-2026-${pad(500 + sequence, 5)}` : "Pending",
+    permitNumber:
+      status === "Issued" || status === "Closed"
+        ? `BP-2026-${pad(500 + sequence, 5)}`
+        : signatureStatus
+          ? `MATNOG-${type === "Closure" ? "CC" : "BP"}-${fiscalPeriod}-${pad(300 + sequence, 5)}`
+          : "Pending",
     priority: index % 13 === 0 ? "Urgent" : "Normal",
-    updatedAt: `2026-09-${pad(3 + (index % 20))} ${pad(8 + (index % 9))}:${index % 2 === 0 ? "20" : "45"}`,
+    updatedAt: `2026-09-${pad(updatedDay)} ${pad(8 + (index % 9))}:${index % 2 === 0 ? "20" : "45"}`,
   };
 }
 

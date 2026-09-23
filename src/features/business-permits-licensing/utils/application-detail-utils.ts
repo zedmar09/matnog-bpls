@@ -345,11 +345,13 @@ export function createProcessingGates(
       detail: ["Issued", "Closed"].includes(record.status)
         ? "Final municipal decision recorded"
         : record.status === "Ready to issue"
-          ? record.currentStage === "For e-signature"
+          ? ["For e-signature", "Awaiting e-signature"].includes(record.currentStage)
             ? "Controlled document generated and awaiting e-signature"
-            : record.type === "Closure"
-              ? "Final approval complete; closure certificate generation is in progress"
-              : "Final approval complete; permit generation is in progress"
+            : record.currentStage === "Ready for release"
+              ? "Signature complete; controlled release is available"
+              : record.type === "Closure"
+                ? "Final approval complete; closure certificate generation is in progress"
+                : "Final approval complete; permit generation is in progress"
           : "Final approval remains unavailable",
     },
   ];

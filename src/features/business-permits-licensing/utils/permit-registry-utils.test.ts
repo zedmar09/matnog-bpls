@@ -6,12 +6,17 @@ import {
   applyPermitLifecycleOverrides,
   createDefaultPermitLifecycleFields,
   createPermitLifecycleHistory,
+  createRestrictedPermitQueue,
   EMPTY_PERMIT_REGISTRY_FILTERS,
+  EMPTY_RESTRICTED_PERMIT_FILTERS,
   filterPermitRegistry,
+  filterRestrictedPermitQueue,
   mergePermitRegistryRecords,
   resolvePublicPermitVerification,
   sortPermitRegistry,
+  sortRestrictedPermitQueue,
   summarizePermitRegistry,
+  summarizeRestrictedPermitQueue,
   validatePermitLifecycleAction,
 } from "./permit-registry-utils";
 import assert from "node:assert/strict";
@@ -186,4 +191,51 @@ test("lifecycle overrides update only their controlled document", () => {
   const updated = applyPermitLifecycleOverrides(records, [result.override]);
   assert.equal(updated.find((item) => item.documentNumber === target.documentNumber)?.status, "Suspended");
   assert.equal(updated.filter((item) => item.status === "Suspended").length >= 1, true);
+});
+
+test("restricted permit queue exposes current controlling evidence and aging", () => {
+  const queue = createRestrictedPermitQueue(MATNOG_PERMIT_REGISTRY, []);
+
+  assert.equal(queue.length, 6);
+  assert.equal(
+    queue.every((record) => record.restriction.orderReference.startsWith("MO-2026-")),
+    true,
+  );
+  assert.equal(
+    queue.every((record) => record.daysRestricted >= 0),
+    true,
+  );
+  assert.deepEqual(summarizeRestrictedPermitQueue(queue), {
+    total: 6,
+    suspended: 4,
+    revoked: 2,
+    inactiveQr: 6,
+    aged: queue.filter((record) => record.daysRestricted >= 30).length,
+  });
+});
+
+test("restricted permit filters and sorting support operational review", () => {
+  const queue = createRestrictedPermitQueue(MATNOG_PERMIT_REGISTRY, []);
+  const target = queue[0];
+  if (!target) throw new Error("Expected restricted permit fixtures.");
+
+  const byOrder = filterRestrictedPermitQueue(queue, {
+    ...EMPTY_RESTRICTED_PERMIT_FILTERS,
+    search: target.restriction.orderReference,
+  });
+  const byStatus = filterRestrictedPermitQueue(queue, {
+    ...EMPTY_RESTRICTED_PERMIT_FILTERS,
+    status: target.status,
+  });
+  const sorted = sortRestrictedPermitQueue(queue, "daysRestricted", "desc");
+
+  assert.deepEqual(
+    byOrder.map((record) => record.documentNumber),
+    [target.documentNumber],
+  );
+  assert.equal(
+    byStatus.every((record) => record.status === target.status),
+    true,
+  );
+  assert.equal(sorted[0]?.daysRestricted >= (sorted.at(-1)?.daysRestricted ?? 0), true);
 });

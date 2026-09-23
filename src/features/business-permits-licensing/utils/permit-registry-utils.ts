@@ -12,6 +12,9 @@ import type {
   PermitRegistryStatus,
   PublicPermitVerificationRecord,
   PublicPermitVerificationState,
+  RestrictedPermitFilters,
+  RestrictedPermitQueueRecord,
+  RestrictedPermitSortKey,
 } from "../types/permit-registry";
 
 export const PERMIT_LIFECYCLE_STORAGE_KEY = "matnog-bpls-permit-lifecycle-overrides-v1";
@@ -33,6 +36,16 @@ export const EMPTY_PERMIT_REGISTRY_FILTERS: PermitRegistryFilters = {
   barangay: "",
   verificationStatus: "",
   releaseChannel: "",
+};
+
+export const EMPTY_RESTRICTED_PERMIT_FILTERS: RestrictedPermitFilters = {
+  search: "",
+  status: "",
+  grounds: "",
+  barangay: "",
+  effectiveFrom: "",
+  effectiveTo: "",
+  officer: "",
 };
 
 export function projectGeneratedPermit(
@@ -297,19 +310,107 @@ export function createPermitLifecycleHistory(
   };
   if (override) return [issued, ...override.events].toReversed();
   if (record.status !== "Suspended" && record.status !== "Revoked") return [issued];
+  const sequence = Number(record.documentNumber.slice(-5));
+  const grounds = PERMIT_RESTRICTION_GROUNDS[sequence % PERMIT_RESTRICTION_GROUNDS.length];
   return [
     {
       id: `PLC-${record.documentNumber.slice(-5)}-RESTRICTION`,
       action: record.status,
       resultingStatus: record.status,
       orderReference: `MO-${record.fiscalPeriod}-${record.documentNumber.slice(-5)}`,
-      grounds: record.status === "Revoked" ? "Material misrepresentation" : "Violation of permit conditions",
+      grounds,
       reason: `Registry restriction recorded after compliance review by the Matnog BPLO.`,
       effectiveDate: record.lastUpdated.slice(0, 10),
       endDate: "",
-      actor: PERMIT_LIFECYCLE_ACTOR,
+      actor: record.releasingOfficer,
       occurredAt: record.lastUpdated,
     },
     issued,
   ];
+}
+
+function dateDifferenceInDays(from: string, to: string) {
+  const start = new Date(`${from.slice(0, 10)}T00:00:00`).getTime();
+  const end = new Date(`${to.slice(0, 10)}T00:00:00`).getTime();
+  return Math.max(0, Math.floor((end - start) / 86_400_000));
+}
+
+export function createRestrictedPermitQueue(
+  records: readonly PermitRegistryRecord[],
+  overrides: readonly PermitLifecycleOverride[],
+  today = "2026-09-23",
+): RestrictedPermitQueueRecord[] {
+  const overrideMap = new Map(overrides.map((override) => [override.documentNumber, override]));
+  return records.flatMap((record) => {
+    if (record.status !== "Suspended" && record.status !== "Revoked") return [];
+    const history = createPermitLifecycleHistory(record, overrideMap.get(record.documentNumber));
+    const restriction = history.find((event) => event.resultingStatus === record.status);
+    return restriction
+      ? [{ ...record, restriction, daysRestricted: dateDifferenceInDays(restriction.effectiveDate, today) }]
+      : [];
+  });
+}
+
+export function filterRestrictedPermitQueue(
+  records: readonly RestrictedPermitQueueRecord[],
+  filters: RestrictedPermitFilters,
+) {
+  const query = filters.search.trim().toLocaleLowerCase();
+  return records.filter((record) => {
+    if (
+      query &&
+      ![
+        record.documentNumber,
+        record.applicationId,
+        record.businessId,
+        record.businessName,
+        record.registeredName,
+        record.ownerName,
+        record.qrToken,
+        record.restriction.orderReference,
+        record.restriction.reason,
+      ]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(query)
+    )
+      return false;
+    if (filters.status && record.status !== filters.status) return false;
+    if (filters.grounds && record.restriction.grounds !== filters.grounds) return false;
+    if (filters.barangay && record.barangay !== filters.barangay) return false;
+    if (filters.officer && record.restriction.actor !== filters.officer) return false;
+    if (filters.effectiveFrom && record.restriction.effectiveDate < filters.effectiveFrom) return false;
+    if (filters.effectiveTo && record.restriction.effectiveDate > filters.effectiveTo) return false;
+    return true;
+  });
+}
+
+function restrictedSortValue(record: RestrictedPermitQueueRecord, key: RestrictedPermitSortKey) {
+  if (key === "effectiveDate") return record.restriction.effectiveDate;
+  if (key === "officer") return record.restriction.actor.toLocaleLowerCase();
+  return record[key];
+}
+
+export function sortRestrictedPermitQueue(
+  records: readonly RestrictedPermitQueueRecord[],
+  key: RestrictedPermitSortKey,
+  direction: "asc" | "desc",
+) {
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...records].sort((a, b) => {
+    const left = restrictedSortValue(a, key);
+    const right = restrictedSortValue(b, key);
+    if (typeof left === "number" && typeof right === "number") return (left - right) * multiplier;
+    return String(left).localeCompare(String(right)) * multiplier;
+  });
+}
+
+export function summarizeRestrictedPermitQueue(records: readonly RestrictedPermitQueueRecord[]) {
+  return {
+    total: records.length,
+    suspended: records.filter((record) => record.status === "Suspended").length,
+    revoked: records.filter((record) => record.status === "Revoked").length,
+    inactiveQr: records.filter((record) => record.verificationStatus === "Inactive").length,
+    aged: records.filter((record) => record.daysRestricted >= 30).length,
+  };
 }

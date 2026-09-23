@@ -3,15 +3,22 @@ import { MATNOG_APPLICATION_DIRECTORY } from "./matnog-application-directory";
 
 const RELEASE_CHANNELS = ["Digital email", "Onsite pickup", "Printed counter release"] as const;
 const OFFICERS = ["Maricel A. Gacosta", "Jocelyn B. Fajardo", "Nelson C. Gubat"] as const;
+const SEEDED_RESTRICTIONS: Readonly<Record<string, PermitRegistryStatus>> = {
+  "00322": "Suspended",
+  "00370": "Revoked",
+  "00410": "Suspended",
+  "00434": "Suspended",
+  "00458": "Revoked",
+  "00482": "Suspended",
+};
 
 function pad(value: number) {
   return String(value).padStart(2, "0");
 }
 
-function permitStatus(index: number, closure: boolean): PermitRegistryStatus {
+function permitStatus(index: number, closure: boolean, sequence: string): PermitRegistryStatus {
   if (closure) return "Closed";
-  if (index % 19 === 0) return "Revoked";
-  if (index % 13 === 0) return "Suspended";
+  if (SEEDED_RESTRICTIONS[sequence]) return SEEDED_RESTRICTIONS[sequence];
   if (index % 7 === 0) return "Expired";
   if (index % 5 === 0) return "Expiring soon";
   return "Active";
@@ -25,8 +32,8 @@ export const MATNOG_PERMIT_REGISTRY: readonly PermitRegistryRecord[] = MATNOG_AP
   const issueMonth = 1 + (index % 8);
   const issueDay = 4 + ((index * 3) % 22);
   const issueDate = `2026-${pad(issueMonth)}-${pad(issueDay)}`;
-  const status = permitStatus(index, closure);
-  const verificationStatus = status === "Revoked" ? "Inactive" : "Active";
+  const status = permitStatus(index, closure, sequence);
+  const verificationStatus = status === "Revoked" || status === "Suspended" ? "Inactive" : "Active";
   return {
     documentNumber: `MATNOG-${closure ? "CC" : "BP"}-${application.fiscalPeriod}-${sequence}`,
     applicationId: application.id,

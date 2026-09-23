@@ -116,3 +116,27 @@ export type PermitLifecycleResult = {
   override: PermitLifecycleOverride;
   event: PermitLifecycleEvent;
 };
+
+export type RestrictedPermitQueueRecord = PermitRegistryRecord & {
+  restriction: PermitLifecycleEvent;
+  daysRestricted: number;
+};
+
+export type RestrictedPermitFilters = {
+  search: string;
+  status: string;
+  grounds: string;
+  barangay: string;
+  effectiveFrom: string;
+  effectiveTo: string;
+  officer: string;
+};
+
+export type RestrictedPermitSortKey =
+  | "documentNumber"
+  | "businessName"
+  | "status"
+  | "barangay"
+  | "effectiveDate"
+  | "daysRestricted"
+  | "officer";

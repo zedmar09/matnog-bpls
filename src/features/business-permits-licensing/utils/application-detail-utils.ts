@@ -187,6 +187,8 @@ export function createApplicationRequirements(
 
 function reviewStatuses(record: ApplicationDirectoryRecord): ApplicationReviewStatus[] {
   if (["Ready to issue", "Issued", "Closed"].includes(record.status)) return REVIEW_OFFICES.map(() => "Approved");
+  if (record.currentStage === "Mayor's final approval")
+    return ["Approved", "Approved", "Approved", "Approved", "Approved", "In review"];
   if (record.status === "Draft") return REVIEW_OFFICES.map(() => "Not started");
   if (record.status === "Submitted")
     return ["In review", "Not started", "Not started", "Not started", "Not started", "Not started"];
@@ -1343,31 +1345,37 @@ export function applyMayorDecision(
     updatedAt: occurredAt,
     events: [...(current?.events ?? []), event],
   };
-  const updatedRecord: ApplicationDirectoryRecord =
-    action === "approve"
-      ? {
-          ...record,
-          status: "Ready to issue",
-          currentStage: record.type === "Closure" ? "Closure certificate generation" : "Permit generation",
-          assignedOfficer: BPLO_REVIEW_ACTOR,
-          updatedAt: occurredAt,
-        }
-      : action === "return"
-        ? {
-            ...record,
-            status: "Under review",
-            currentStage: fields.returnDestination,
-            assignedOfficer: MAYOR_RETURN_ASSIGNEES[fields.returnDestination] ?? BPLO_REVIEW_ACTOR,
-            updatedAt: occurredAt,
-          }
-        : {
-            ...record,
-            status: "Under review",
-            currentStage: "Mayor's final approval",
-            assignedOfficer: MAYOR_REVIEW_ACTOR,
-            updatedAt: occurredAt,
-          };
+  const updatedRecord = applyMayorReviewOverride(record, override);
   return { record: updatedRecord, override, event };
+}
+
+export function applyMayorReviewOverride(
+  record: ApplicationDirectoryRecord,
+  override: MayorReviewOverride,
+): ApplicationDirectoryRecord {
+  if (override.status === "Approved")
+    return {
+      ...record,
+      status: "Ready to issue",
+      currentStage: record.type === "Closure" ? "Closure certificate generation" : "Permit generation",
+      assignedOfficer: BPLO_REVIEW_ACTOR,
+      updatedAt: override.updatedAt,
+    };
+  if (override.status === "For correction")
+    return {
+      ...record,
+      status: "Under review",
+      currentStage: override.returnDestination,
+      assignedOfficer: MAYOR_RETURN_ASSIGNEES[override.returnDestination] ?? BPLO_REVIEW_ACTOR,
+      updatedAt: override.updatedAt,
+    };
+  return {
+    ...record,
+    status: "Under review",
+    currentStage: "Mayor's final approval",
+    assignedOfficer: MAYOR_REVIEW_ACTOR,
+    updatedAt: override.updatedAt,
+  };
 }
 
 export function mergeMayorReviewOverrides(overrides: readonly MayorReviewOverride[], next: MayorReviewOverride) {

@@ -71,6 +71,7 @@ import {
   applyFireDecision,
   applyHealthDecision,
   applyMayorDecision,
+  applyMayorReviewOverride,
   applyPaymentConfirmation,
   applyPaymentReversal,
   applyPermitDocumentAction,
@@ -407,6 +408,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       const currentMayorOverride = mayorOverrides.find((item) => item.applicationId === applicationId.toUpperCase());
       setMayorOverride(currentMayorOverride);
       if (currentMayorOverride) {
+        if (resolvedRecord) setRecord(applyMayorReviewOverride(resolvedRecord, currentMayorOverride));
         setMayorFields({
           decisionReference: currentMayorOverride.decisionReference,
           decisionDate: currentMayorOverride.decisionDate,

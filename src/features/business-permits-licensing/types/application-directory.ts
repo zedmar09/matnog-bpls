@@ -71,3 +71,35 @@ export type ApplicationDirectorySortKey =
   | "paymentStatus"
   | "priority"
   | "updatedAt";
+
+export type FinalApprovalDecisionState = "Ready for decision" | "Deferred";
+
+export type FinalApprovalQueueRecord = ApplicationDirectoryRecord & {
+  decisionState: FinalApprovalDecisionState;
+  daysWaiting: number;
+  overdue: boolean;
+  deferralReason: string;
+};
+
+export type FinalApprovalFilters = {
+  search: string;
+  type: string;
+  barangay: string;
+  riskLevel: string;
+  priority: string;
+  decisionState: string;
+  targetFrom: string;
+  targetTo: string;
+};
+
+export type FinalApprovalSortKey =
+  | "id"
+  | "businessName"
+  | "type"
+  | "barangay"
+  | "riskLevel"
+  | "assessmentAmount"
+  | "targetRelease"
+  | "daysWaiting"
+  | "priority"
+  | "decisionState";

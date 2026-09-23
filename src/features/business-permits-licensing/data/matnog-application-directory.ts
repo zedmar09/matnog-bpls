@@ -29,6 +29,7 @@ export const APPLICATION_STAGES = [
 ] as const;
 
 const TYPES: readonly ApplicationDirectoryType[] = ["Renewal", "Renewal", "New", "Amendment", "Renewal", "Closure"];
+const FINAL_APPROVAL_TYPES: readonly ApplicationDirectoryType[] = ["Renewal", "New", "Amendment", "Closure"];
 const STATUSES: readonly ApplicationDirectoryStatus[] = [
   "Under review",
   "Submitted",
@@ -47,18 +48,29 @@ function pad(value: number, length = 2) {
 function createApplication(index: number): ApplicationDirectoryRecord {
   const sequence = index + 1;
   const business = MATNOG_BUSINESS_DIRECTORY[(index * 11) % MATNOG_BUSINESS_DIRECTORY.length];
-  const type = TYPES[index % TYPES.length];
+  const generatedType = TYPES[index % TYPES.length];
   const status = STATUSES[index % STATUSES.length];
   const month = 5 + (index % 5);
   const day = 2 + ((index * 7) % 25);
   const filedAt = `2026-${pad(month)}-${pad(day)} ${pad(8 + (index % 9))}:${index % 2 === 0 ? "15" : "40"}`;
   const targetDay = Math.min(28, day + 7 + (index % 5));
   const targetRelease = `2026-${pad(month)}-${pad(targetDay)}`;
+  const seededStage = APPLICATION_STAGES[index % APPLICATION_STAGES.length];
+  const finalApproval = status !== "Issued" && status !== "Closed" && seededStage === "Final approval";
+  const type = finalApproval
+    ? FINAL_APPROVAL_TYPES[Math.floor(index / 8) % FINAL_APPROVAL_TYPES.length]
+    : generatedType;
   const requirementsTotal = 6 + (index % 4);
-  const requirementsComplete =
-    status === "Draft" ? 2 + (index % 3) : status === "For correction" ? requirementsTotal - 1 : requirementsTotal;
-  const paymentStatus: ApplicationPaymentStatus =
-    status === "Draft" || status === "Submitted"
+  const requirementsComplete = finalApproval
+    ? requirementsTotal
+    : status === "Draft"
+      ? 2 + (index % 3)
+      : status === "For correction"
+        ? requirementsTotal - 1
+        : requirementsTotal;
+  const paymentStatus: ApplicationPaymentStatus = finalApproval
+    ? "Paid"
+    : status === "Draft" || status === "Submitted"
       ? "Not assessed"
       : status === "Issued" || status === "Closed" || status === "Ready to issue"
         ? "Paid"
@@ -79,9 +91,9 @@ function createApplication(index: number): ApplicationDirectoryRecord {
     fiscalPeriod: type === "Renewal" && index % 3 === 0 ? "2027" : "2026",
     filedAt,
     targetRelease,
-    assignedOfficer: APPLICATION_OFFICERS[index % APPLICATION_OFFICERS.length],
+    assignedOfficer: finalApproval ? "Roberto P. Hababag" : APPLICATION_OFFICERS[index % APPLICATION_OFFICERS.length],
     currentStage:
-      status === "Issued" || status === "Closed" ? "Completed" : APPLICATION_STAGES[index % APPLICATION_STAGES.length],
+      status === "Issued" || status === "Closed" ? "Completed" : finalApproval ? "Mayor's final approval" : seededStage,
     requirementsComplete,
     requirementsTotal,
     assessmentAmount,

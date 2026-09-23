@@ -513,6 +513,42 @@
   display: grid;
   gap: 5px;
 }
+.zoningFieldGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.zoningFieldGrid label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.zoningFieldGrid span {
+  color: #646c7e;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.zoningFieldGrid select,
+.zoningFieldGrid input {
+  width: 100%;
+  min-height: 35px;
+  padding: 0 9px;
+  border: 1px solid #dce0e8;
+  border-radius: 4px;
+  outline: 0;
+  background: #fff;
+  color: #30384a;
+  font: inherit;
+  font-size: 9px;
+}
+.zoningFieldGrid select:focus,
+.zoningFieldGrid input:focus {
+  border-color: #8668d5;
+  box-shadow: 0 0 0 3px rgb(112 71 215 / 9%);
+}
 .remarksField > span,
 .affectedRequirements legend {
   color: #646c7e;
@@ -601,6 +637,11 @@
   border-color: #efc9cc !important;
   background: #fff5f5;
   color: #ae3d47;
+}
+.notApplicableButton {
+  border-color: #d8dce5 !important;
+  background: #f6f7f9;
+  color: #5f687a;
 }
 .approveButton {
   background: #7047d7;
@@ -917,7 +958,8 @@
   .factGrid,
   .reviewGrid,
   .sideColumn .factGrid,
-  .affectedRequirements > div {
+  .affectedRequirements > div,
+  .zoningFieldGrid {
     grid-template-columns: 1fr;
   }
   .activeReviewCard > dl {

@@ -7,6 +7,7 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
+  Ban,
   Banknote,
   Building2,
   CalendarClock,
@@ -19,6 +20,7 @@ import {
   FileQuestion,
   FileText,
   MapPin,
+  MapPinned,
   MessageSquareText,
   ReceiptText,
   RotateCcw,
@@ -31,10 +33,17 @@ import { ConfirmationDialog } from "@/shared/components/confirmation-dialog";
 import styles from "../components/application-detail.module.css";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
-import type { ApplicationGateStatus, BploReviewAction, BploReviewOverride } from "../types/application-detail";
+import type {
+  ApplicationGateStatus,
+  BploReviewAction,
+  BploReviewOverride,
+  ZoningReviewAction,
+  ZoningReviewOverride,
+} from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
 import {
   applyBploDecision,
+  applyZoningDecision,
   BPLO_REVIEW_ACTOR,
   BPLO_REVIEW_STORAGE_KEY,
   createApplicationRequirements,
@@ -42,8 +51,12 @@ import {
   createOfficeReviews,
   createProcessingGates,
   mergeBploReviewOverrides,
+  mergeZoningReviewOverrides,
   resolveApplicationRecord,
   validateBploDecision,
+  validateZoningDecision,
+  ZONING_REVIEW_ACTOR,
+  ZONING_REVIEW_STORAGE_KEY,
 } from "../utils/application-detail-utils";
 import { SAVED_APPLICATIONS_STORAGE_KEY } from "../utils/application-wizard-utils";
 import { mergeBusinessRecords, REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
@@ -94,10 +107,21 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [businesses, setBusinesses] = useState(() => [...MATNOG_BUSINESS_DIRECTORY]);
   const [loaded, setLoaded] = useState(Boolean(seededRecord));
   const [bploOverride, setBploOverride] = useState<BploReviewOverride>();
+  const [zoningOverride, setZoningOverride] = useState<ZoningReviewOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
-  const [pendingAction, setPendingAction] = useState<Exclude<BploReviewAction, "note"> | null>(null);
+  const [pendingBploAction, setPendingBploAction] = useState<Exclude<BploReviewAction, "note"> | null>(null);
+  const [zoningFields, setZoningFields] = useState({
+    classification: "",
+    compatibility: "",
+    occupancyType: "",
+    referenceNumber: "",
+    remarks: "",
+  });
+  const [zoningAffectedRequirementIds, setZoningAffectedRequirementIds] = useState<string[]>([]);
+  const [zoningError, setZoningError] = useState("");
+  const [pendingZoningAction, setPendingZoningAction] = useState<Exclude<ZoningReviewAction, "note"> | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -113,6 +137,21 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       setBploOverride(currentOverride);
       setRemarks(currentOverride?.remarks ?? "");
       setAffectedRequirementIds(currentOverride?.affectedRequirementIds ?? []);
+      const zoningOverrides = JSON.parse(
+        window.localStorage.getItem(ZONING_REVIEW_STORAGE_KEY) ?? "[]",
+      ) as ZoningReviewOverride[];
+      const currentZoningOverride = zoningOverrides.find((item) => item.applicationId === applicationId.toUpperCase());
+      setZoningOverride(currentZoningOverride);
+      if (currentZoningOverride) {
+        setZoningFields({
+          classification: currentZoningOverride.classification,
+          compatibility: currentZoningOverride.compatibility,
+          occupancyType: currentZoningOverride.occupancyType,
+          referenceNumber: currentZoningOverride.referenceNumber,
+          remarks: currentZoningOverride.remarks,
+        });
+        setZoningAffectedRequirementIds(currentZoningOverride.affectedRequirementIds);
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -124,17 +163,20 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
 
   const business = businesses.find((item) => item.id === record?.businessId);
   const requirements = useMemo(
-    () => (record ? createApplicationRequirements(record, bploOverride) : []),
-    [record, bploOverride],
+    () => (record ? createApplicationRequirements(record, bploOverride, zoningOverride) : []),
+    [record, bploOverride, zoningOverride],
   );
-  const reviews = useMemo(() => (record ? createOfficeReviews(record, bploOverride) : []), [record, bploOverride]);
+  const reviews = useMemo(
+    () => (record ? createOfficeReviews(record, bploOverride, zoningOverride) : []),
+    [record, bploOverride, zoningOverride],
+  );
   const gates = useMemo(
     () => (record ? createProcessingGates(record, requirements, reviews) : []),
     [record, requirements, reviews],
   );
   const timeline = useMemo(
-    () => (record ? createApplicationTimeline(record, bploOverride) : []),
-    [record, bploOverride],
+    () => (record ? createApplicationTimeline(record, bploOverride, zoningOverride) : []),
+    [record, bploOverride, zoningOverride],
   );
 
   function requestDecision(action: BploReviewAction) {
@@ -145,7 +187,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     }
     setFormError("");
     if (action === "note") commitDecision(action);
-    else setPendingAction(action);
+    else setPendingBploAction(action);
   }
 
   function commitDecision(action: BploReviewAction) {
@@ -170,7 +212,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     );
     setRecord(result.record);
     setBploOverride(result.override);
-    setPendingAction(null);
+    setPendingBploAction(null);
     setFormError("");
     setNotice(
       action === "approve"
@@ -186,6 +228,64 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
     );
     setFormError("");
+  }
+
+  function updateZoningField(field: keyof typeof zoningFields, value: string) {
+    setZoningFields((current) => ({ ...current, [field]: value }));
+    setZoningError("");
+  }
+
+  function toggleZoningRequirement(id: string) {
+    setZoningAffectedRequirementIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+    setZoningError("");
+  }
+
+  function requestZoningDecision(action: ZoningReviewAction) {
+    const error = validateZoningDecision(action, zoningFields, zoningAffectedRequirementIds);
+    if (error) {
+      setZoningError(error);
+      return;
+    }
+    setZoningError("");
+    if (action === "note") commitZoningDecision(action);
+    else setPendingZoningAction(action);
+  }
+
+  function commitZoningDecision(action: ZoningReviewAction) {
+    if (!record) return;
+    const result = applyZoningDecision(record, zoningOverride, action, zoningFields, zoningAffectedRequirementIds);
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let zoningOverrides: ZoningReviewOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      zoningOverrides = JSON.parse(window.localStorage.getItem(ZONING_REVIEW_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      zoningOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      ZONING_REVIEW_STORAGE_KEY,
+      JSON.stringify(mergeZoningReviewOverrides(zoningOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setZoningOverride(result.override);
+    setPendingZoningAction(null);
+    setZoningError("");
+    setNotice(
+      action === "approve"
+        ? "Zoning review approved and routed to Health and Sanitary Review."
+        : action === "return"
+          ? "Zoning review returned for correction."
+          : action === "not-applicable"
+            ? "Zoning review marked not applicable and workflow advanced."
+            : "Zoning internal note saved to the audit trail.",
+    );
   }
 
   if (!loaded)
@@ -212,6 +312,10 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const verifiedRequirements = requirements.filter((item) => item.status === "Verified").length;
   const approvedReviews = reviews.filter((item) => ["Approved", "Not applicable"].includes(item.status)).length;
   const completedGates = gates.filter((gate) => gate.status === "Complete").length;
+  const terminal = ["Issued", "Closed"].includes(record.status);
+  const bploReviewActive = !terminal && reviews[0]?.status !== "Approved";
+  const zoningReviewActive =
+    !terminal && reviews[0]?.status === "Approved" && !["Approved", "Not applicable"].includes(reviews[1]?.status);
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -230,7 +334,12 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          <ShieldCheck size={14} /> BPLO review active · {BPLO_REVIEW_ACTOR}
+          {zoningReviewActive ? <MapPinned size={14} /> : <ShieldCheck size={14} />}
+          {zoningReviewActive
+            ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+            : bploReviewActive
+              ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+              : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -402,7 +511,14 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             </header>
             <div className={styles.reviewGrid}>
               {reviews.map((review, index) => (
-                <article className={index === 0 ? styles.activeReviewCard : ""} key={review.id}>
+                <article
+                  className={
+                    (index === 0 && bploReviewActive) || (index === 1 && zoningReviewActive)
+                      ? styles.activeReviewCard
+                      : ""
+                  }
+                  key={review.id}
+                >
                   <div className={styles.reviewTop}>
                     <span className={styles.reviewNumber}>{String(index + 1).padStart(2, "0")}</span>
                     <StatusBadge value={review.status} />
@@ -423,7 +539,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                       <dd>{formatDate(review.completedAt, true)}</dd>
                     </div>
                   </dl>
-                  {index === 0 && !["Issued", "Closed"].includes(record.status) ? (
+                  {index === 0 && bploReviewActive ? (
                     <div className={styles.reviewActions}>
                       <div className={styles.reviewActionHeading}>
                         <MessageSquareText size={14} />
@@ -472,6 +588,127 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                           onClick={() => requestDecision("approve")}
                         >
                           <CheckCircle2 size={13} /> Approve completeness
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {index === 1 && zoningReviewActive ? (
+                    <div className={styles.reviewActions}>
+                      <div className={styles.reviewActionHeading}>
+                        <MapPinned size={14} />
+                        <span>
+                          <strong>Zoning findings and locational decision</strong>
+                          <small>Record the MPDO land-use determination before routing the application onward.</small>
+                        </span>
+                      </div>
+                      <div className={styles.zoningFieldGrid}>
+                        <label>
+                          <span>Zoning classification</span>
+                          <select
+                            value={zoningFields.classification}
+                            onChange={(event) => updateZoningField("classification", event.target.value)}
+                          >
+                            <option value="">Select classification</option>
+                            <option>Commercial zone</option>
+                            <option>Residential zone</option>
+                            <option>Industrial zone</option>
+                            <option>Agro-industrial zone</option>
+                            <option>Institutional zone</option>
+                            <option>Tourism zone</option>
+                            <option>Exempt transaction</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Land-use compatibility</span>
+                          <select
+                            value={zoningFields.compatibility}
+                            onChange={(event) => updateZoningField("compatibility", event.target.value)}
+                          >
+                            <option value="">Select result</option>
+                            <option>Conforming use</option>
+                            <option>Conditionally compatible</option>
+                            <option>Needs verification</option>
+                            <option>Non-conforming use</option>
+                            <option>Not applicable</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Occupancy type</span>
+                          <select
+                            value={zoningFields.occupancyType}
+                            onChange={(event) => updateZoningField("occupancyType", event.target.value)}
+                          >
+                            <option value="">Select occupancy</option>
+                            <option>Mercantile</option>
+                            <option>Business</option>
+                            <option>Assembly</option>
+                            <option>Industrial</option>
+                            <option>Storage</option>
+                            <option>Mixed-use</option>
+                            <option>No change in occupancy</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Locational reference no.</span>
+                          <input
+                            value={zoningFields.referenceNumber}
+                            placeholder={`ZLC-2026-${record.id.slice(-5)}`}
+                            onChange={(event) => updateZoningField("referenceNumber", event.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <label className={styles.remarksField}>
+                        <span>Site findings / inspection notes</span>
+                        <textarea
+                          value={zoningFields.remarks}
+                          placeholder="Record site conditions, setback findings, compatibility notes, or the correction reason…"
+                          onChange={(event) => updateZoningField("remarks", event.target.value)}
+                        />
+                      </label>
+                      <fieldset className={styles.affectedRequirements}>
+                        <legend>Affected requirements for correction return</legend>
+                        <div>
+                          {requirements.map((item) => (
+                            <label key={item.id}>
+                              <input
+                                type="checkbox"
+                                checked={zoningAffectedRequirementIds.includes(item.id)}
+                                onChange={() => toggleZoningRequirement(item.id)}
+                              />
+                              <span>{item.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                      {zoningError ? <p className={styles.formError}>{zoningError}</p> : null}
+                      <div className={styles.reviewButtons}>
+                        <button
+                          type="button"
+                          className={styles.noteButton}
+                          onClick={() => requestZoningDecision("note")}
+                        >
+                          <Save size={13} /> Save internal note
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.notApplicableButton}
+                          onClick={() => requestZoningDecision("not-applicable")}
+                        >
+                          <Ban size={13} /> Not applicable
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.returnButton}
+                          onClick={() => requestZoningDecision("return")}
+                        >
+                          <RotateCcw size={13} /> Return for correction
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.approveButton}
+                          onClick={() => requestZoningDecision("approve")}
+                        >
+                          <CheckCircle2 size={13} /> Approve zoning review
                         </button>
                       </div>
                     </div>
@@ -621,20 +858,53 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         </aside>
       </div>
       <ConfirmationDialog
-        open={Boolean(pendingAction)}
+        open={Boolean(pendingBploAction)}
         onOpenChange={(open) => {
-          if (!open) setPendingAction(null);
+          if (!open) setPendingBploAction(null);
         }}
-        title={pendingAction === "approve" ? "Approve BPLO completeness review?" : "Return application for correction?"}
+        title={
+          pendingBploAction === "approve" ? "Approve BPLO completeness review?" : "Return application for correction?"
+        }
         description={
-          pendingAction === "approve"
+          pendingBploAction === "approve"
             ? "This records BPLO approval, updates the application to Under review, and routes it to Zoning review."
             : `This changes the application to For correction and returns ${affectedRequirementIds.length} selected ${affectedRequirementIds.length === 1 ? "requirement" : "requirements"} to the applicant.`
         }
-        confirmLabel={pendingAction === "approve" ? "Approve and route" : "Return application"}
-        destructive={pendingAction === "return"}
+        confirmLabel={pendingBploAction === "approve" ? "Approve and route" : "Return application"}
+        destructive={pendingBploAction === "return"}
         onConfirm={() => {
-          if (pendingAction) commitDecision(pendingAction);
+          if (pendingBploAction) commitDecision(pendingBploAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingZoningAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingZoningAction(null);
+        }}
+        title={
+          pendingZoningAction === "approve"
+            ? "Approve zoning and locational review?"
+            : pendingZoningAction === "not-applicable"
+              ? "Mark zoning review as not applicable?"
+              : "Return zoning review for correction?"
+        }
+        description={
+          pendingZoningAction === "approve"
+            ? "This records the zoning findings and routes the application to Health and Sanitary Review."
+            : pendingZoningAction === "not-applicable"
+              ? "This records the exemption reason and routes the application to Health and Sanitary Review."
+              : `This returns ${zoningAffectedRequirementIds.length} selected ${zoningAffectedRequirementIds.length === 1 ? "requirement" : "requirements"} to the applicant while keeping the case assigned to Zoning.`
+        }
+        confirmLabel={
+          pendingZoningAction === "approve"
+            ? "Approve and route"
+            : pendingZoningAction === "not-applicable"
+              ? "Confirm not applicable"
+              : "Return for correction"
+        }
+        destructive={pendingZoningAction === "return"}
+        onConfirm={() => {
+          if (pendingZoningAction) commitZoningDecision(pendingZoningAction);
         }}
       />
     </main>

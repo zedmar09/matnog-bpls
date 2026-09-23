@@ -7,6 +7,9 @@ import type {
   BploDecisionResult,
   BploReviewAction,
   BploReviewOverride,
+  ZoningDecisionResult,
+  ZoningReviewAction,
+  ZoningReviewOverride,
 } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
 
@@ -33,6 +36,8 @@ const REVIEW_OFFICES = [
 
 export const BPLO_REVIEW_STORAGE_KEY = "matnog-bpls-bplo-review-overrides-v1";
 export const BPLO_REVIEW_ACTOR = "Maricel A. Gacosta";
+export const ZONING_REVIEW_STORAGE_KEY = "matnog-bpls-zoning-review-overrides-v1";
+export const ZONING_REVIEW_ACTOR = "Angela F. Dela Cruz";
 
 function sequence(record: ApplicationDirectoryRecord) {
   const digits = Number(record.id.replace(/\D/g, "").slice(-5));
@@ -53,6 +58,7 @@ export function resolveApplicationRecord(
 export function createApplicationRequirements(
   record: ApplicationDirectoryRecord,
   override?: BploReviewOverride,
+  zoningOverride?: ZoningReviewOverride,
 ): ApplicationRequirementDetail[] {
   const seed = sequence(record);
   const total = Math.min(REQUIREMENTS.length, Math.max(1, record.requirementsTotal));
@@ -67,6 +73,11 @@ export function createApplicationRequirements(
     if (
       override?.status === "For correction" &&
       override.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
+    )
+      status = "Returned";
+    if (
+      zoningOverride?.status === "For correction" &&
+      zoningOverride.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
     )
       status = "Returned";
     return {
@@ -104,17 +115,21 @@ function reviewStatuses(record: ApplicationDirectoryRecord): ApplicationReviewSt
 export function createOfficeReviews(
   record: ApplicationDirectoryRecord,
   override?: BploReviewOverride,
+  zoningOverride?: ZoningReviewOverride,
 ): ApplicationOfficeReview[] {
-  const statuses: ApplicationReviewStatus[] = override
-    ? override.status === "Approved"
-      ? ["Approved", "In review", "Not started", "Not started", "Not started", "Not started"]
-      : override.status === "For correction"
-        ? ["For correction", "Not started", "Not started", "Not started", "Not started", "Not started"]
-        : reviewStatuses(record)
-    : reviewStatuses(record);
+  let statuses: ApplicationReviewStatus[] = reviewStatuses(record);
+  if (override?.status === "Approved")
+    statuses = ["Approved", "In review", "Not started", "Not started", "Not started", "Not started"];
+  else if (override?.status === "For correction")
+    statuses = ["For correction", "Not started", "Not started", "Not started", "Not started", "Not started"];
+  if (zoningOverride) {
+    const nextStatus = ["Approved", "Not applicable"].includes(zoningOverride.status) ? "In review" : "Not started";
+    statuses = ["Approved", zoningOverride.status, nextStatus, "Not started", "Not started", "Not started"];
+  }
   const seed = sequence(record);
   return REVIEW_OFFICES.map(([office, assignee], index) => {
-    const status = index === 0 && override ? override.status : statuses[index];
+    const officeOverride = index === 0 ? override : index === 1 ? zoningOverride : undefined;
+    const status = officeOverride?.status ?? statuses[index];
     return {
       id: `REV-${record.id.slice(-5)}-${index + 1}`,
       office,
@@ -123,20 +138,19 @@ export function createOfficeReviews(
       receivedAt: status === "Not started" ? "" : `2026-09-${String(11 + ((seed + index) % 9)).padStart(2, "0")} 09:15`,
       completedAt:
         status === "Approved"
-          ? index === 0 && override
-            ? override.updatedAt
+          ? officeOverride
+            ? officeOverride.updatedAt
             : `2026-09-${String(12 + ((seed + index) % 9)).padStart(2, "0")} 14:30`
           : "",
-      remarks:
-        index === 0 && override
-          ? override.remarks
-          : status === "Approved"
-            ? "Review completed; no unresolved findings recorded."
-            : status === "For correction"
-              ? "Updated supporting evidence is required before review can resume."
-              : status === "In review"
-                ? "Assigned office is validating the submitted application packet."
-                : "Waiting for the preceding processing gate.",
+      remarks: officeOverride
+        ? officeOverride.remarks
+        : status === "Approved"
+          ? "Review completed; no unresolved findings recorded."
+          : status === "For correction"
+            ? "Updated supporting evidence is required before review can resume."
+            : status === "In review"
+              ? "Assigned office is validating the submitted application packet."
+              : "Waiting for the preceding processing gate.",
     };
   });
 }
@@ -195,6 +209,7 @@ export function createProcessingGates(
 export function createApplicationTimeline(
   record: ApplicationDirectoryRecord,
   override?: BploReviewOverride,
+  zoningOverride?: ZoningReviewOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -208,7 +223,7 @@ export function createApplicationTimeline(
     [
       "Requirements indexed",
       `${record.requirementsComplete} of ${record.requirementsTotal} submitted requirements indexed.`,
-      record.assignedOfficer,
+      "Maricel A. Gacosta",
       "BPLO",
     ],
     [
@@ -235,8 +250,10 @@ export function createApplicationTimeline(
   const count =
     record.status === "Draft" ? 2 : record.status === "Submitted" ? 3 : record.status === "For correction" ? 5 : 8;
   const sourceStatus = override?.sourceStatus ?? record.status;
-  if (override && sourceStatus !== record.status)
-    return [...createApplicationTimeline({ ...record, status: sourceStatus }), ...override.events];
+  if (override && sourceStatus !== record.status) {
+    const base = createApplicationTimeline({ ...record, status: sourceStatus });
+    return [...base, ...override.events, ...(zoningOverride?.events ?? [])];
+  }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
     id: `EVT-${record.id.slice(-5)}-${index + 1}`,
     action,
@@ -248,7 +265,7 @@ export function createApplicationTimeline(
         ? record.filedAt
         : `2026-09-${String(12 + ((seed + index) % 10)).padStart(2, "0")} ${String(9 + (index % 7)).padStart(2, "0")}:${index % 2 ? "40" : "15"}`,
   }));
-  return override ? [...generated, ...override.events] : generated;
+  return [...generated, ...(override?.events ?? []), ...(zoningOverride?.events ?? [])];
 }
 
 export function validateBploDecision(
@@ -332,5 +349,102 @@ export function applyBploDecision(
 }
 
 export function mergeBploReviewOverrides(overrides: readonly BploReviewOverride[], next: BploReviewOverride) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+type ZoningDecisionFields = Pick<
+  ZoningReviewOverride,
+  "classification" | "compatibility" | "occupancyType" | "referenceNumber" | "remarks"
+>;
+
+export function validateZoningDecision(
+  action: ZoningReviewAction,
+  fields: ZoningDecisionFields,
+  affectedRequirementIds: readonly string[],
+) {
+  if (action === "note" && fields.remarks.trim().length < 3) return "Enter an internal zoning note.";
+  if (action === "return" && fields.remarks.trim().length < 10)
+    return "Enter a correction reason of at least 10 characters.";
+  if (action === "return" && affectedRequirementIds.length === 0) return "Select at least one affected requirement.";
+  if (action === "not-applicable" && fields.remarks.trim().length < 10)
+    return "Explain why zoning review is not applicable.";
+  if (["approve", "not-applicable"].includes(action)) {
+    if (!fields.classification.trim()) return "Select a zoning classification.";
+    if (!fields.compatibility.trim()) return "Select the land-use compatibility result.";
+    if (!fields.occupancyType.trim()) return "Select an occupancy type.";
+    if (!fields.referenceNumber.trim()) return "Enter the locational review reference number.";
+  }
+  return "";
+}
+
+export function applyZoningDecision(
+  record: ApplicationDirectoryRecord,
+  current: ZoningReviewOverride | undefined,
+  action: ZoningReviewAction,
+  fields: ZoningDecisionFields,
+  affectedRequirementIds: string[],
+  occurredAt = "2026-09-23 17:20",
+): ZoningDecisionResult {
+  const status: ApplicationReviewStatus =
+    action === "approve"
+      ? "Approved"
+      : action === "return"
+        ? "For correction"
+        : action === "not-applicable"
+          ? "Not applicable"
+          : (current?.status ?? "In review");
+  const actionLabels: Record<ZoningReviewAction, string> = {
+    approve: "Zoning and locational review approved",
+    return: "Zoning review returned for correction",
+    "not-applicable": "Zoning review marked not applicable",
+    note: "Zoning internal note added",
+  };
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-ZONING-${(current?.events.length ?? 0) + 1}`,
+    action: actionLabels[action],
+    detail:
+      action === "return"
+        ? `${fields.remarks.trim()} (${affectedRequirementIds.length} affected ${affectedRequirementIds.length === 1 ? "requirement" : "requirements"}).`
+        : fields.remarks.trim() || "Zoning findings recorded with no unresolved land-use issues.",
+    actor: ZONING_REVIEW_ACTOR,
+    office: "MPDO / Zoning",
+    occurredAt,
+  };
+  const override: ZoningReviewOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    status,
+    classification: fields.classification.trim(),
+    compatibility: fields.compatibility.trim(),
+    occupancyType: fields.occupancyType.trim(),
+    referenceNumber: fields.referenceNumber.trim(),
+    remarks: fields.remarks.trim() || current?.remarks || "Zoning review completed with no unresolved findings.",
+    affectedRequirementIds: action === "return" ? [...affectedRequirementIds] : [],
+    actor: ZONING_REVIEW_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const completed = action === "approve" || action === "not-applicable";
+  const updatedRecord: ApplicationDirectoryRecord = completed
+    ? {
+        ...record,
+        status: "Under review",
+        currentStage: "Health and sanitary review",
+        assignedOfficer: "Dr. Elena M. Frilles",
+        updatedAt: occurredAt,
+      }
+    : action === "return"
+      ? {
+          ...record,
+          status: "For correction",
+          currentStage: "Zoning review",
+          assignedOfficer: ZONING_REVIEW_ACTOR,
+          updatedAt: occurredAt,
+        }
+      : { ...record, updatedAt: occurredAt };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergeZoningReviewOverrides(overrides: readonly ZoningReviewOverride[], next: ZoningReviewOverride) {
   return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
 }

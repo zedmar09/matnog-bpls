@@ -1,12 +1,14 @@
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import {
   applyBploDecision,
+  applyZoningDecision,
   createApplicationRequirements,
   createApplicationTimeline,
   createOfficeReviews,
   createProcessingGates,
   resolveApplicationRecord,
   validateBploDecision,
+  validateZoningDecision,
 } from "./application-detail-utils";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -67,4 +69,61 @@ test("BPLO correction return changes the application and selected evidence", () 
     createApplicationTimeline(result.record, result.override).at(-1)?.action,
     "BPLO review returned for correction",
   );
+});
+
+test("zoning approval records findings and advances the application", () => {
+  const record = MATNOG_APPLICATION_DIRECTORY.find((item) => item.status === "Submitted");
+  assert.ok(record);
+  const bplo = applyBploDecision(record, undefined, "approve", "Completeness confirmed.", []);
+  const result = applyZoningDecision(
+    bplo.record,
+    undefined,
+    "approve",
+    {
+      classification: "Commercial zone",
+      compatibility: "Conforming use",
+      occupancyType: "Mercantile",
+      referenceNumber: "ZLC-2026-00318",
+      remarks: "Location is compatible with the approved land-use classification.",
+    },
+    [],
+  );
+  assert.equal(result.record.status, "Under review");
+  assert.equal(result.record.currentStage, "Health and sanitary review");
+  assert.equal(result.override.status, "Approved");
+  assert.equal(createOfficeReviews(result.record, bplo.override, result.override)[2].status, "In review");
+  assert.equal(createApplicationTimeline(result.record, bplo.override, result.override)[2].actor, "Maricel A. Gacosta");
+});
+
+test("zoning return requires a reason and selected requirement", () => {
+  const fields = {
+    classification: "Commercial zone",
+    compatibility: "Needs verification",
+    occupancyType: "Mercantile",
+    referenceNumber: "ZLC-2026-00318",
+    remarks: "Short",
+  };
+  assert.ok(validateZoningDecision("return", fields, []));
+  assert.ok(validateZoningDecision("return", { ...fields, remarks: "Upload an updated site plan." }, []));
+  assert.equal(validateZoningDecision("return", { ...fields, remarks: "Upload an updated site plan." }, ["REQ-1"]), "");
+});
+
+test("zoning not-applicable decisions advance with an audit event", () => {
+  const record = MATNOG_APPLICATION_DIRECTORY[0];
+  const result = applyZoningDecision(
+    record,
+    undefined,
+    "not-applicable",
+    {
+      classification: "Exempt transaction",
+      compatibility: "Not applicable",
+      occupancyType: "No change in occupancy",
+      referenceNumber: "ZNA-2026-00001",
+      remarks: "Closure transaction does not require a new locational clearance.",
+    },
+    [],
+  );
+  assert.equal(result.override.status, "Not applicable");
+  assert.equal(result.record.currentStage, "Health and sanitary review");
+  assert.match(result.event.action, /not applicable/i);
 });

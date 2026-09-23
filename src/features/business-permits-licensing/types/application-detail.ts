@@ -2,6 +2,7 @@ export type ApplicationRequirementStatus = "Verified" | "Pending review" | "Miss
 export type ApplicationReviewStatus = "Approved" | "In review" | "Not started" | "For correction" | "Not applicable";
 export type ApplicationGateStatus = "Complete" | "In progress" | "Blocked" | "Pending";
 export type BploReviewAction = "approve" | "return" | "note";
+export type ZoningReviewAction = "approve" | "return" | "not-applicable" | "note";
 
 export type ApplicationRequirementDetail = {
   id: string;
@@ -54,5 +55,26 @@ export type BploReviewOverride = {
 export type BploDecisionResult = {
   record: import("./application-directory").ApplicationDirectoryRecord;
   override: BploReviewOverride;
+  event: ApplicationTimelineEvent;
+};
+
+export type ZoningReviewOverride = {
+  applicationId: string;
+  sourceStatus: import("./application-directory").ApplicationDirectoryStatus;
+  status: ApplicationReviewStatus;
+  classification: string;
+  compatibility: string;
+  occupancyType: string;
+  referenceNumber: string;
+  remarks: string;
+  affectedRequirementIds: string[];
+  actor: string;
+  updatedAt: string;
+  events: ApplicationTimelineEvent[];
+};
+
+export type ZoningDecisionResult = {
+  record: import("./application-directory").ApplicationDirectoryRecord;
+  override: ZoningReviewOverride;
   event: ApplicationTimelineEvent;
 };

@@ -6,6 +6,7 @@ import {
   applyMayorDecision,
   applyPaymentConfirmation,
   applyPaymentReversal,
+  applyPermitDocumentAction,
   applyTreasurerAssessment,
   applyZoningDecision,
   calculateAssessmentTotals,
@@ -15,9 +16,11 @@ import {
   createDefaultAssessmentFields,
   createDefaultMayorFields,
   createDefaultPaymentFields,
+  createDefaultPermitDocumentFields,
   createOfficeReviews,
   createProcessingGates,
   invalidateMayorApprovalForPaymentReversal,
+  invalidatePermitDocumentForPaymentReversal,
   resolveApplicationRecord,
   validateBploDecision,
   validateFireDecision,
@@ -25,6 +28,7 @@ import {
   validateMayorDecision,
   validatePaymentConfirmation,
   validatePaymentReversal,
+  validatePermitDocument,
   validateTreasurerAssessment,
   validateZoningDecision,
 } from "./application-detail-utils";
@@ -435,4 +439,75 @@ test("Payment reversal invalidates an existing Mayor approval without erasing it
   assert.equal(invalidated.events.length, 2);
   assert.equal(invalidated.events[0].action, "Mayor final approval recorded");
   assert.equal(invalidated.events[1].action, "Mayor approval invalidated");
+});
+
+test("Permit generation creates a controlled number, QR token, and immutable version", () => {
+  const ready = {
+    ...payableRecord,
+    type: "Renewal" as const,
+    status: "Ready to issue" as const,
+    currentStage: "Permit generation",
+    paymentStatus: "Paid" as const,
+  };
+  const fields = createDefaultPermitDocumentFields(ready);
+  const result = applyPermitDocumentAction(ready, undefined, "generate", fields);
+  assert.equal(result.record.currentStage, "For e-signature");
+  assert.equal(result.record.permitNumber, `MATNOG-BP-${ready.fiscalPeriod}-${ready.id.slice(-5)}`);
+  assert.equal(result.override.status, "For signature");
+  assert.equal(result.override.versions.length, 1);
+  assert.match(result.override.qrToken, new RegExp(`^MTG-${ready.fiscalPeriod}-`));
+});
+
+test("Closure generation uses a certificate number and no validity end date", () => {
+  const readyClosure = {
+    ...payableRecord,
+    type: "Closure" as const,
+    status: "Ready to issue" as const,
+    currentStage: "Closure certificate generation",
+    paymentStatus: "Paid" as const,
+  };
+  const fields = createDefaultPermitDocumentFields(readyClosure);
+  assert.equal(fields.effectiveUntil, "");
+  assert.equal(validatePermitDocument("generate", fields, readyClosure.type), "");
+  const result = applyPermitDocumentAction(readyClosure, undefined, "generate", fields);
+  assert.equal(result.record.permitNumber, `MATNOG-CC-${readyClosure.fiscalPeriod}-${readyClosure.id.slice(-5)}`);
+});
+
+test("Document generation validates dates, signatory, conditions, and numbering", () => {
+  const fields = createDefaultPermitDocumentFields(payableRecord);
+  assert.ok(validatePermitDocument("generate", { ...fields, documentNumber: "BP-318" }, payableRecord.type));
+  assert.ok(validatePermitDocument("generate", { ...fields, signatoryName: "" }, payableRecord.type));
+  assert.ok(validatePermitDocument("generate", { ...fields, conditions: "Short" }, payableRecord.type));
+  assert.ok(
+    validatePermitDocument(
+      "generate",
+      { ...fields, effectiveFrom: "2026-12-31", effectiveUntil: "2026-01-01" },
+      payableRecord.type,
+    ),
+  );
+});
+
+test("Regeneration preserves prior document versions", () => {
+  const ready = { ...payableRecord, status: "Ready to issue" as const, currentStage: "Permit generation" };
+  const fields = createDefaultPermitDocumentFields(ready);
+  const first = applyPermitDocumentAction(ready, undefined, "generate", fields);
+  const second = applyPermitDocumentAction(first.record, first.override, "generate", {
+    ...fields,
+    productionNotes: "Corrected the document production note for version two.",
+  });
+  assert.deepEqual(
+    second.override.versions.map((version) => version.version),
+    [1, 2],
+  );
+  assert.equal(second.override.versions[0].documentNumber, second.override.versions[1].documentNumber);
+});
+
+test("Payment reversal invalidates a generated document while retaining its versions", () => {
+  const ready = { ...payableRecord, status: "Ready to issue" as const, currentStage: "Permit generation" };
+  const generated = applyPermitDocumentAction(ready, undefined, "generate", createDefaultPermitDocumentFields(ready));
+  const invalidated = invalidatePermitDocumentForPaymentReversal(generated.record, generated.override);
+  assert.equal(invalidated.record.permitNumber, "Pending");
+  assert.equal(invalidated.override.status, "Invalidated");
+  assert.equal(invalidated.override.versions.length, 1);
+  assert.equal(invalidated.override.events.at(-1)?.action, "Generated document invalidated");
 });

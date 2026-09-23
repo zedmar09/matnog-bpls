@@ -21,6 +21,9 @@ import type {
   PaymentConfirmationOverride,
   PaymentConfirmationResult,
   PaymentTransaction,
+  PermitDocumentAction,
+  PermitDocumentOverride,
+  PermitDocumentResult,
   TreasurerAssessmentAction,
   TreasurerAssessmentOverride,
   TreasurerAssessmentResult,
@@ -80,6 +83,8 @@ export const PAYMENT_CONFIRMATION_STORAGE_KEY = "matnog-bpls-payment-confirmatio
 export const PAYMENT_CONFIRMATION_ACTOR = "Rogelio M. Funes";
 export const MAYOR_REVIEW_STORAGE_KEY = "matnog-bpls-mayor-review-overrides-v1";
 export const MAYOR_REVIEW_ACTOR = "Roberto P. Hababag";
+export const PERMIT_DOCUMENT_STORAGE_KEY = "matnog-bpls-permit-document-overrides-v1";
+export const PERMIT_DOCUMENT_ACTOR = "Maricel A. Gacosta";
 export const MAYOR_RETURN_DESTINATIONS = [
   "BPLO completeness review",
   "Zoning and locational review",
@@ -331,9 +336,11 @@ export function createProcessingGates(
       detail: ["Issued", "Closed"].includes(record.status)
         ? "Final municipal decision recorded"
         : record.status === "Ready to issue"
-          ? record.type === "Closure"
-            ? "Final approval complete; closure certificate generation is in progress"
-            : "Final approval complete; permit generation is in progress"
+          ? record.currentStage === "For e-signature"
+            ? "Controlled document generated and awaiting e-signature"
+            : record.type === "Closure"
+              ? "Final approval complete; closure certificate generation is in progress"
+              : "Final approval complete; permit generation is in progress"
           : "Final approval remains unavailable",
     },
   ];
@@ -348,6 +355,7 @@ export function createApplicationTimeline(
   treasurerOverride?: TreasurerAssessmentOverride,
   paymentOverride?: PaymentConfirmationOverride,
   mayorOverride?: MayorReviewOverride,
+  permitDocumentOverride?: PermitDocumentOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -399,6 +407,7 @@ export function createApplicationTimeline(
       ...(treasurerOverride?.events ?? []),
       ...(paymentOverride?.events ?? []),
       ...(mayorOverride?.events ?? []),
+      ...(permitDocumentOverride?.events ?? []),
     ];
   }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
@@ -421,6 +430,7 @@ export function createApplicationTimeline(
     ...(treasurerOverride?.events ?? []),
     ...(paymentOverride?.events ?? []),
     ...(mayorOverride?.events ?? []),
+    ...(permitDocumentOverride?.events ?? []),
   ];
 }
 
@@ -1373,5 +1383,175 @@ export function invalidateMayorApprovalForPaymentReversal(
     remarks: "Prior final approval invalidated by a payment reversal.",
     updatedAt: occurredAt,
     events: [...current.events, event],
+  };
+}
+
+export type PermitDocumentFields = Pick<
+  PermitDocumentOverride,
+  | "documentNumber"
+  | "templateName"
+  | "issueDate"
+  | "effectiveFrom"
+  | "effectiveUntil"
+  | "signatoryName"
+  | "signatoryTitle"
+  | "signatureProvider"
+  | "conditions"
+  | "productionNotes"
+>;
+
+export function createPermitDocumentNumber(record: ApplicationDirectoryRecord) {
+  const prefix = record.type === "Closure" ? "CC" : "BP";
+  return `MATNOG-${prefix}-${record.fiscalPeriod}-${record.id.slice(-5)}`;
+}
+
+export function createPermitQrToken(record: ApplicationDirectoryRecord) {
+  return `MTG-${record.fiscalPeriod}-${record.id.replace(/\D/g, "").slice(-5)}-${record.businessId.replace(/\D/g, "").slice(-4)}`;
+}
+
+export function createDefaultPermitDocumentFields(
+  record: ApplicationDirectoryRecord,
+  mayorOverride?: MayorReviewOverride,
+): PermitDocumentFields {
+  return {
+    documentNumber: createPermitDocumentNumber(record),
+    templateName: record.type === "Closure" ? "Matnog Closure Certificate · 2026" : "Matnog Business Permit · 2026",
+    issueDate: mayorOverride?.decisionDate || "2026-09-23",
+    effectiveFrom: mayorOverride?.effectiveFrom || "2026-09-23",
+    effectiveUntil: record.type === "Closure" ? "" : mayorOverride?.effectiveUntil || `${record.fiscalPeriod}-12-31`,
+    signatoryName: MAYOR_REVIEW_ACTOR,
+    signatoryTitle: "Municipal Mayor",
+    signatureProvider: "DocuSign · Pending connection",
+    conditions:
+      mayorOverride?.conditions ||
+      "Subject to continued compliance with applicable municipal and national regulations.",
+    productionNotes: "",
+  };
+}
+
+export function validatePermitDocument(
+  action: PermitDocumentAction,
+  fields: PermitDocumentFields,
+  applicationType: ApplicationDirectoryRecord["type"],
+) {
+  if (action === "save")
+    return fields.productionNotes.trim().length >= 3 ? "" : "Enter a production note before saving the draft.";
+  if (!fields.documentNumber.trim()) return "Enter the controlled document number.";
+  if (!/^MATNOG-(BP|CC)-\d{4}-\d{5}$/.test(fields.documentNumber.trim()))
+    return "Use the controlled number format MATNOG-BP-YYYY-##### or MATNOG-CC-YYYY-#####.";
+  if (!fields.templateName.trim()) return "Select a document template.";
+  if (!fields.issueDate) return "Enter the document issue date.";
+  if (fields.issueDate > "2026-09-23") return "The issue date cannot be in the future.";
+  if (!fields.effectiveFrom) return "Enter the effectivity date.";
+  if (applicationType !== "Closure" && !fields.effectiveUntil) return "Enter the permit validity end date.";
+  if (fields.effectiveUntil && fields.effectiveUntil < fields.effectiveFrom)
+    return "The validity end date cannot be before the effectivity date.";
+  if (!fields.signatoryName.trim()) return "Enter the authorized signatory.";
+  if (!fields.signatoryTitle.trim()) return "Enter the signatory title.";
+  if (!fields.signatureProvider.trim()) return "Select the e-signature provider.";
+  if (fields.conditions.trim().length < 10) return "Enter document conditions of at least 10 characters.";
+  return "";
+}
+
+export function applyPermitDocumentAction(
+  record: ApplicationDirectoryRecord,
+  current: PermitDocumentOverride | undefined,
+  action: PermitDocumentAction,
+  fields: PermitDocumentFields,
+  occurredAt = "2026-09-23 21:30",
+): PermitDocumentResult {
+  const generated = action === "generate";
+  const documentNumber = fields.documentNumber.trim();
+  const qrToken = current?.qrToken || createPermitQrToken(record);
+  const nextVersion = (current?.versions.length ?? 0) + 1;
+  const version = generated
+    ? {
+        version: nextVersion,
+        documentNumber,
+        qrToken,
+        templateName: fields.templateName.trim(),
+        issueDate: fields.issueDate,
+        effectiveFrom: fields.effectiveFrom,
+        effectiveUntil: fields.effectiveUntil,
+        signatoryName: fields.signatoryName.trim(),
+        signatoryTitle: fields.signatoryTitle.trim(),
+        signatureProvider: fields.signatureProvider.trim(),
+        conditions: fields.conditions.trim(),
+        generatedAt: occurredAt,
+        generatedBy: PERMIT_DOCUMENT_ACTOR,
+      }
+    : undefined;
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-DOCUMENT-${(current?.events.length ?? 0) + 1}`,
+    action: generated
+      ? `${record.type === "Closure" ? "Closure certificate" : "Business permit"} generated`
+      : "Document production draft saved",
+    detail: generated
+      ? `${documentNumber} version ${nextVersion} generated with verification token ${qrToken} and queued for e-signature.`
+      : fields.productionNotes.trim(),
+    actor: PERMIT_DOCUMENT_ACTOR,
+    office: "BPLO",
+    occurredAt,
+  };
+  const override: PermitDocumentOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    status: generated ? "For signature" : (current?.status ?? "Draft"),
+    ...fields,
+    documentNumber,
+    templateName: fields.templateName.trim(),
+    signatoryName: fields.signatoryName.trim(),
+    signatoryTitle: fields.signatoryTitle.trim(),
+    signatureProvider: fields.signatureProvider.trim(),
+    conditions: fields.conditions.trim(),
+    productionNotes: fields.productionNotes.trim(),
+    qrToken,
+    versions: version ? [...(current?.versions ?? []), version] : (current?.versions ?? []),
+    actor: PERMIT_DOCUMENT_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const updatedRecord: ApplicationDirectoryRecord = generated
+    ? {
+        ...record,
+        status: "Ready to issue",
+        currentStage: "For e-signature",
+        assignedOfficer: PERMIT_DOCUMENT_ACTOR,
+        permitNumber: documentNumber,
+        updatedAt: occurredAt,
+      }
+    : { ...record, updatedAt: occurredAt };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergePermitDocumentOverrides(
+  overrides: readonly PermitDocumentOverride[],
+  next: PermitDocumentOverride,
+) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+export function invalidatePermitDocumentForPaymentReversal(
+  record: ApplicationDirectoryRecord,
+  current: PermitDocumentOverride,
+  occurredAt = "2026-09-23 20:30",
+): PermitDocumentResult {
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-DOCUMENT-${current.events.length + 1}`,
+    action: "Generated document invalidated",
+    detail: `${current.documentNumber} was invalidated after a confirmed payment reversal. Version history was retained for audit.`,
+    actor: "System",
+    office: "Matnog BPLS",
+    occurredAt,
+  };
+  return {
+    record: { ...record, permitNumber: "Pending", updatedAt: occurredAt },
+    override: {
+      ...current,
+      status: "Invalidated",
+      updatedAt: occurredAt,
+      events: [...current.events, event],
+    },
+    event,
   };
 }

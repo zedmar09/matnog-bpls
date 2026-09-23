@@ -983,6 +983,214 @@
   background: #7047d7;
   color: #fff;
 }
+.documentWorkspace {
+  padding: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.82fr);
+  gap: 18px;
+}
+.documentForm {
+  min-width: 0;
+}
+.documentPreview {
+  min-height: 560px;
+  padding: 26px 30px 22px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #d8d2c4;
+  background: #fffefb;
+  box-shadow: 0 7px 24px rgb(51 43 30 / 8%);
+  color: #323744;
+  text-align: center;
+}
+.documentPreview::before,
+.documentPreview::after {
+  position: absolute;
+  content: "";
+  inset: 8px;
+  border: 1px solid #d9cfb8;
+  pointer-events: none;
+}
+.documentPreview::after {
+  inset: 12px;
+  border-color: #eee8da;
+}
+.documentSeal {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 7px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #7047d7;
+  border-radius: 50%;
+  color: #7047d7;
+  font-size: 20px;
+  font-weight: 800;
+}
+.documentPreview > small,
+.documentPreview > strong,
+.documentPreview > span {
+  display: block;
+}
+.documentPreview > small,
+.documentPreview > span {
+  color: #747b89;
+  font-size: 7px;
+}
+.documentPreview > strong {
+  margin-top: 2px;
+  font-family: Georgia, serif;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+.documentPreview h3 {
+  margin: 24px 0 5px;
+  color: #5533ad;
+  font-family: Georgia, serif;
+  font-size: 20px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.documentPreview .documentNumber {
+  margin: 0 0 20px;
+  color: #6c7381;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.documentPreview p {
+  min-height: auto;
+  margin: 5px 0;
+  color: #727987;
+  font-size: 8px;
+  line-height: 1.5;
+}
+.documentPreview h4 {
+  margin: 6px 0 2px;
+  color: #262c38;
+  font-family: Georgia, serif;
+  font-size: 15px;
+}
+.documentPreview dl {
+  margin: 20px 0 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid #e4dfd3;
+  border-left: 1px solid #e4dfd3;
+  text-align: left;
+}
+.documentPreview dl div {
+  padding: 7px;
+  display: block;
+  border-right: 1px solid #e4dfd3;
+  border-bottom: 1px solid #e4dfd3;
+}
+.documentPreview dt {
+  color: #8a909b;
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.documentPreview dd {
+  margin: 2px 0 0;
+  color: #343a47;
+  font-size: 7px;
+  text-align: left;
+}
+.documentPreview .documentConditions {
+  padding: 8px;
+  border: 1px dashed #dcd4c3;
+  background: #fcfaf4;
+  color: #565d6a;
+}
+.documentFooter {
+  margin-top: 25px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 15px;
+  text-align: left;
+}
+.documentFooter > span:first-child {
+  flex: 1;
+}
+.documentFooter i {
+  display: block;
+  border-top: 1px solid #777d88;
+}
+.documentFooter strong,
+.documentFooter small {
+  display: block;
+}
+.documentFooter strong {
+  margin-top: 4px;
+  font-size: 8px;
+}
+.documentFooter small {
+  color: #7c8390;
+  font-size: 6px;
+}
+.qrPlaceholder {
+  width: 78px;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: #404755;
+  text-align: center;
+}
+.qrPlaceholder small {
+  overflow-wrap: anywhere;
+}
+.documentPreview em {
+  margin-top: 20px;
+  display: block;
+  color: #9b5c62;
+  font-size: 6px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.documentVersions {
+  margin: 0 18px 18px;
+  border: 1px solid #e1e4ea;
+}
+.documentVersions header,
+.documentVersions article {
+  padding: 9px 11px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+}
+.documentVersions header {
+  background: #f7f8fa;
+  color: #555d6f;
+  font-size: 8px;
+}
+.documentVersions header small {
+  text-align: right;
+}
+.documentVersions article {
+  border-top: 1px solid #e8eaf0;
+}
+.documentVersions span,
+.documentVersions strong,
+.documentVersions small {
+  display: block;
+}
+.documentVersions article > span:last-child {
+  text-align: right;
+}
+.documentVersions strong {
+  color: #383f4f;
+  font-size: 8px;
+}
+.documentVersions small {
+  margin-top: 2px;
+  color: #858c9b;
+  font-size: 7px;
+}
 .timeline {
   margin: 0;
   padding: 15px 18px 18px;
@@ -1342,6 +1550,27 @@
   }
   .reviewButtons button {
     width: 100%;
+  }
+  .documentWorkspace {
+    padding: 14px;
+    grid-template-columns: 1fr;
+  }
+  .documentPreview {
+    min-height: 0;
+    padding: 24px 22px 20px;
+  }
+  .documentPreview dl,
+  .documentVersions header,
+  .documentVersions article {
+    grid-template-columns: 1fr;
+  }
+  .documentVersions article > span:last-child,
+  .documentVersions header small {
+    text-align: left;
+  }
+  .documentFooter {
+    align-items: stretch;
+    flex-direction: column;
   }
   .businessStrip {
     grid-template-columns: auto 1fr;

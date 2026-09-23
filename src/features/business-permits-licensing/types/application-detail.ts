@@ -8,6 +8,8 @@ export type FireReviewAction = "approve" | "return" | "not-applicable" | "note";
 export type TreasurerAssessmentAction = "save" | "return" | "post";
 export type PaymentConfirmationAction = "save" | "confirm" | "reject";
 export type MayorReviewAction = "approve" | "return" | "defer";
+export type PermitDocumentAction = "save" | "generate";
+export type PermitDocumentStatus = "Draft" | "For signature" | "Invalidated";
 export type PaymentTransactionStatus = "Confirmed" | "Rejected" | "Reversed";
 
 export type AssessmentFeeItem = {
@@ -230,5 +232,48 @@ export type MayorReviewOverride = {
 export type MayorDecisionResult = {
   record: import("./application-directory").ApplicationDirectoryRecord;
   override: MayorReviewOverride;
+  event: ApplicationTimelineEvent;
+};
+
+export type PermitDocumentVersion = {
+  version: number;
+  documentNumber: string;
+  qrToken: string;
+  templateName: string;
+  issueDate: string;
+  effectiveFrom: string;
+  effectiveUntil: string;
+  signatoryName: string;
+  signatoryTitle: string;
+  signatureProvider: string;
+  conditions: string;
+  generatedAt: string;
+  generatedBy: string;
+};
+
+export type PermitDocumentOverride = {
+  applicationId: string;
+  sourceStatus: import("./application-directory").ApplicationDirectoryStatus;
+  status: PermitDocumentStatus;
+  documentNumber: string;
+  templateName: string;
+  issueDate: string;
+  effectiveFrom: string;
+  effectiveUntil: string;
+  signatoryName: string;
+  signatoryTitle: string;
+  signatureProvider: string;
+  conditions: string;
+  productionNotes: string;
+  qrToken: string;
+  versions: PermitDocumentVersion[];
+  actor: string;
+  updatedAt: string;
+  events: ApplicationTimelineEvent[];
+};
+
+export type PermitDocumentResult = {
+  record: import("./application-directory").ApplicationDirectoryRecord;
+  override: PermitDocumentOverride;
   event: ApplicationTimelineEvent;
 };

@@ -38,6 +38,7 @@ import { FireReviewActions, type FireReviewFields } from "../components/fire-rev
 import { HealthReviewActions, type HealthReviewFields } from "../components/health-review-actions";
 import { MayorReviewActions } from "../components/mayor-review-actions";
 import { PaymentConfirmationActions } from "../components/payment-confirmation-actions";
+import { PermitDocumentGeneration } from "../components/permit-document-generation";
 import { TreasurerAssessmentActions } from "../components/treasurer-assessment-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
@@ -53,6 +54,8 @@ import type {
   MayorReviewOverride,
   PaymentConfirmationAction,
   PaymentConfirmationOverride,
+  PermitDocumentAction,
+  PermitDocumentOverride,
   TreasurerAssessmentAction,
   TreasurerAssessmentOverride,
   ZoningReviewAction,
@@ -66,6 +69,7 @@ import {
   applyMayorDecision,
   applyPaymentConfirmation,
   applyPaymentReversal,
+  applyPermitDocumentAction,
   applyTreasurerAssessment,
   applyZoningDecision,
   BPLO_REVIEW_ACTOR,
@@ -78,6 +82,7 @@ import {
   createDefaultAssessmentFields,
   createDefaultMayorFields,
   createDefaultPaymentFields,
+  createDefaultPermitDocumentFields,
   createOfficeReviews,
   createProcessingGates,
   FIRE_REVIEW_ACTOR,
@@ -85,6 +90,7 @@ import {
   HEALTH_REVIEW_ACTOR,
   HEALTH_REVIEW_STORAGE_KEY,
   invalidateMayorApprovalForPaymentReversal,
+  invalidatePermitDocumentForPaymentReversal,
   MAYOR_REVIEW_ACTOR,
   MAYOR_REVIEW_STORAGE_KEY,
   type MayorReviewFields,
@@ -93,11 +99,15 @@ import {
   mergeHealthReviewOverrides,
   mergeMayorReviewOverrides,
   mergePaymentConfirmationOverrides,
+  mergePermitDocumentOverrides,
   mergeTreasurerAssessmentOverrides,
   mergeZoningReviewOverrides,
   PAYMENT_CONFIRMATION_ACTOR,
   PAYMENT_CONFIRMATION_STORAGE_KEY,
   type PaymentConfirmationFields,
+  PERMIT_DOCUMENT_ACTOR,
+  PERMIT_DOCUMENT_STORAGE_KEY,
+  type PermitDocumentFields,
   resolveApplicationRecord,
   TREASURER_ASSESSMENT_ACTOR,
   TREASURER_ASSESSMENT_STORAGE_KEY,
@@ -108,6 +118,7 @@ import {
   validateMayorDecision,
   validatePaymentConfirmation,
   validatePaymentReversal,
+  validatePermitDocument,
   validateTreasurerAssessment,
   validateZoningDecision,
   ZONING_REVIEW_ACTOR,
@@ -168,6 +179,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [treasurerOverride, setTreasurerOverride] = useState<TreasurerAssessmentOverride>();
   const [paymentOverride, setPaymentOverride] = useState<PaymentConfirmationOverride>();
   const [mayorOverride, setMayorOverride] = useState<MayorReviewOverride>();
+  const [permitDocumentOverride, setPermitDocumentOverride] = useState<PermitDocumentOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -230,6 +242,14 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   );
   const [mayorError, setMayorError] = useState("");
   const [pendingMayorAction, setPendingMayorAction] = useState<MayorReviewAction | null>(null);
+  const [permitDocumentFields, setPermitDocumentFields] = useState<PermitDocumentFields>(() =>
+    createDefaultPermitDocumentFields(seededRecord ?? MATNOG_APPLICATION_DIRECTORY[0]),
+  );
+  const [permitDocumentError, setPermitDocumentError] = useState("");
+  const [pendingPermitDocumentAction, setPendingPermitDocumentAction] = useState<Exclude<
+    PermitDocumentAction,
+    "save"
+  > | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -362,6 +382,29 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       } else if (resolvedRecord) {
         setMayorFields(createDefaultMayorFields(resolvedRecord));
       }
+      const permitDocumentOverrides = JSON.parse(
+        window.localStorage.getItem(PERMIT_DOCUMENT_STORAGE_KEY) ?? "[]",
+      ) as PermitDocumentOverride[];
+      const currentPermitDocument = permitDocumentOverrides.find(
+        (item) => item.applicationId === applicationId.toUpperCase(),
+      );
+      setPermitDocumentOverride(currentPermitDocument);
+      if (currentPermitDocument) {
+        setPermitDocumentFields({
+          documentNumber: currentPermitDocument.documentNumber,
+          templateName: currentPermitDocument.templateName,
+          issueDate: currentPermitDocument.issueDate,
+          effectiveFrom: currentPermitDocument.effectiveFrom,
+          effectiveUntil: currentPermitDocument.effectiveUntil,
+          signatoryName: currentPermitDocument.signatoryName,
+          signatoryTitle: currentPermitDocument.signatoryTitle,
+          signatureProvider: currentPermitDocument.signatureProvider,
+          conditions: currentPermitDocument.conditions,
+          productionNotes: currentPermitDocument.productionNotes,
+        });
+      } else if (resolvedRecord) {
+        setPermitDocumentFields(createDefaultPermitDocumentFields(resolvedRecord, currentMayorOverride));
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -417,6 +460,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             treasurerOverride,
             paymentOverride,
             mayorOverride,
+            permitDocumentOverride,
           )
         : [],
     [
@@ -428,6 +472,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       treasurerOverride,
       paymentOverride,
       mayorOverride,
+      permitDocumentOverride,
     ],
   );
   const assessmentTotals = useMemo(() => calculateAssessmentTotals(treasurerFields), [treasurerFields]);
@@ -875,8 +920,30 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
 
   function commitPaymentReversal() {
     if (!record || !paymentOverride || !pendingReversalTransactionId) return;
-    const result = applyPaymentReversal(record, paymentOverride, pendingReversalTransactionId, reversalReason);
+    const reversalResult = applyPaymentReversal(record, paymentOverride, pendingReversalTransactionId, reversalReason);
+    const invalidatedDocument =
+      permitDocumentOverride?.status === "For signature"
+        ? invalidatePermitDocumentForPaymentReversal(
+            reversalResult.record,
+            permitDocumentOverride,
+            reversalResult.override.updatedAt,
+          )
+        : undefined;
+    const result = invalidatedDocument ? { ...reversalResult, record: invalidatedDocument.record } : reversalResult;
     persistPaymentResult(result);
+    if (invalidatedDocument) {
+      let permitDocumentOverrides: PermitDocumentOverride[] = [];
+      try {
+        permitDocumentOverrides = JSON.parse(window.localStorage.getItem(PERMIT_DOCUMENT_STORAGE_KEY) ?? "[]");
+      } catch {
+        permitDocumentOverrides = [];
+      }
+      window.localStorage.setItem(
+        PERMIT_DOCUMENT_STORAGE_KEY,
+        JSON.stringify(mergePermitDocumentOverrides(permitDocumentOverrides, invalidatedDocument.override)),
+      );
+      setPermitDocumentOverride(invalidatedDocument.override);
+    }
     if (mayorOverride?.status === "Approved") {
       const invalidatedMayor = invalidateMayorApprovalForPaymentReversal(
         result.record,
@@ -952,6 +1019,66 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     );
   }
 
+  function updatePermitDocumentField<K extends keyof PermitDocumentFields>(field: K, value: PermitDocumentFields[K]) {
+    setPermitDocumentFields((current) => ({ ...current, [field]: value }));
+    setPermitDocumentError("");
+  }
+
+  function requestPermitDocumentAction(action: PermitDocumentAction) {
+    if (!record) return;
+    const error = validatePermitDocument(action, permitDocumentFields, record.type);
+    if (error) {
+      setPermitDocumentError(error);
+      return;
+    }
+    setPermitDocumentError("");
+    if (action === "save") commitPermitDocumentAction(action);
+    else setPendingPermitDocumentAction(action);
+  }
+
+  function commitPermitDocumentAction(action: PermitDocumentAction) {
+    if (!record) return;
+    const result = applyPermitDocumentAction(record, permitDocumentOverride, action, permitDocumentFields);
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let permitDocumentOverrides: PermitDocumentOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      permitDocumentOverrides = JSON.parse(window.localStorage.getItem(PERMIT_DOCUMENT_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      permitDocumentOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      PERMIT_DOCUMENT_STORAGE_KEY,
+      JSON.stringify(mergePermitDocumentOverrides(permitDocumentOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setPermitDocumentOverride(result.override);
+    setPermitDocumentFields({
+      documentNumber: result.override.documentNumber,
+      templateName: result.override.templateName,
+      issueDate: result.override.issueDate,
+      effectiveFrom: result.override.effectiveFrom,
+      effectiveUntil: result.override.effectiveUntil,
+      signatoryName: result.override.signatoryName,
+      signatoryTitle: result.override.signatoryTitle,
+      signatureProvider: result.override.signatureProvider,
+      conditions: result.override.conditions,
+      productionNotes: result.override.productionNotes,
+    });
+    setPendingPermitDocumentAction(null);
+    setPermitDocumentError("");
+    setNotice(
+      action === "generate"
+        ? `${record.type === "Closure" ? "Closure certificate" : "Business permit"} generated and queued for e-signature.`
+        : "Document production draft saved to the audit trail.",
+    );
+  }
+
   if (!loaded)
     return (
       <main className={styles.page}>
@@ -1002,6 +1129,11 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     record.paymentStatus === "Paid" &&
     reviews.slice(0, 5).every((review) => ["Approved", "Not applicable"].includes(review.status)) &&
     reviews[5]?.status !== "Approved";
+  const permitDocumentActive =
+    !terminal &&
+    record.status === "Ready to issue" &&
+    mayorOverride?.status === "Approved" &&
+    ["Permit generation", "Closure certificate generation", "For e-signature"].includes(record.currentStage);
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -1020,7 +1152,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          {mayorReviewActive ? (
+          {permitDocumentActive ? (
+            <FileCheck2 size={14} />
+          ) : mayorReviewActive ? (
             <ShieldCheck size={14} />
           ) : paymentConfirmationActive ? (
             <CreditCard size={14} />
@@ -1035,21 +1169,25 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           ) : (
             <ShieldCheck size={14} />
           )}
-          {mayorReviewActive
-            ? `Mayor final approval active · ${MAYOR_REVIEW_ACTOR}`
-            : paymentConfirmationActive
-              ? `Payment confirmation active · ${PAYMENT_CONFIRMATION_ACTOR}`
-              : treasurerReviewActive
-                ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
-                : fireReviewActive
-                  ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
-                  : healthReviewActive
-                    ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
-                    : zoningReviewActive
-                      ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
-                      : bploReviewActive
-                        ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
-                        : `Current office · ${record.assignedOfficer}`}
+          {permitDocumentActive
+            ? permitDocumentOverride?.status === "For signature"
+              ? `Document prepared for e-signature · ${PERMIT_DOCUMENT_ACTOR}`
+              : `Document generation active · ${PERMIT_DOCUMENT_ACTOR}`
+            : mayorReviewActive
+              ? `Mayor final approval active · ${MAYOR_REVIEW_ACTOR}`
+              : paymentConfirmationActive
+                ? `Payment confirmation active · ${PAYMENT_CONFIRMATION_ACTOR}`
+                : treasurerReviewActive
+                  ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
+                  : fireReviewActive
+                    ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
+                    : healthReviewActive
+                      ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
+                      : zoningReviewActive
+                        ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+                        : bploReviewActive
+                          ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+                          : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -1500,6 +1638,18 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             </div>
           </section>
 
+          {permitDocumentActive && mayorOverride ? (
+            <PermitDocumentGeneration
+              record={record}
+              mayorDecision={mayorOverride}
+              fields={permitDocumentFields}
+              document={permitDocumentOverride}
+              error={permitDocumentError}
+              onFieldChange={updatePermitDocumentField}
+              onAction={requestPermitDocumentAction}
+            />
+          ) : null}
+
           <section className={styles.card}>
             <header className={styles.cardHeader}>
               <span>
@@ -1829,6 +1979,18 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         destructive={pendingPaymentAction === "reject"}
         onConfirm={() => {
           if (pendingPaymentAction) commitPaymentAction(pendingPaymentAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingPermitDocumentAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingPermitDocumentAction(null);
+        }}
+        title={`Generate ${record.type === "Closure" ? "closure certificate" : "business permit"}?`}
+        description={`This creates an immutable document version for ${permitDocumentFields.documentNumber}, assigns its QR verification token, and routes it to e-signature. It does not release or finalize the document.`}
+        confirmLabel="Generate and queue for signature"
+        onConfirm={() => {
+          if (pendingPermitDocumentAction) commitPermitDocumentAction(pendingPermitDocumentAction);
         }}
       />
       <ConfirmationDialog

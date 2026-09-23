@@ -1,8 +1,15 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
 import { FileCheck2, QrCode, Save, Sparkles } from "lucide-react";
 
+import { MATNOG_PERMIT_TEMPLATES } from "../data/matnog-permit-templates";
 import type { MayorReviewOverride, PermitDocumentAction, PermitDocumentOverride } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
+import type { PermitTemplateRecord } from "../types/permit-template";
 import type { PermitDocumentFields } from "../utils/application-detail-utils";
+import { PERMIT_TEMPLATE_STORAGE_KEY } from "../utils/permit-template-utils";
 import styles from "./application-detail.module.css";
 
 type PermitDocumentGenerationProps = {
@@ -26,6 +33,42 @@ export function PermitDocumentGeneration({
 }: PermitDocumentGenerationProps) {
   const closure = record.type === "Closure";
   const latestVersion = document?.versions.at(-1);
+  const [templates, setTemplates] = useState<readonly PermitTemplateRecord[]>(MATNOG_PERMIT_TEMPLATES);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(
+        window.localStorage.getItem(PERMIT_TEMPLATE_STORAGE_KEY) ?? "[]",
+      ) as PermitTemplateRecord[];
+      if (saved.length) setTemplates(saved);
+    } catch {
+      setTemplates(MATNOG_PERMIT_TEMPLATES);
+    }
+  }, []);
+
+  const activeTemplates = useMemo(
+    () =>
+      templates.filter(
+        (template) =>
+          template.status === "Active" &&
+          template.documentType === (closure ? "Closure Certificate" : "Business Permit"),
+      ),
+    [closure, templates],
+  );
+  const templateOptions = useMemo(
+    () => [...new Set([fields.templateName, ...activeTemplates.map((template) => template.name)])],
+    [activeTemplates, fields.templateName],
+  );
+
+  const selectTemplate = (name: string) => {
+    onFieldChange("templateName", name);
+    const template = activeTemplates.find((item) => item.name === name);
+    if (!template) return;
+    onFieldChange("signatoryName", template.signatoryName);
+    onFieldChange("signatoryTitle", template.signatoryTitle);
+    onFieldChange("signatureProvider", template.signatureProvider);
+    onFieldChange("conditions", template.defaultConditions);
+  };
 
   return (
     <section className={styles.card}>
@@ -64,21 +107,10 @@ export function PermitDocumentGeneration({
             </label>
             <label>
               <span>Template</span>
-              <select
-                value={fields.templateName}
-                onChange={(event) => onFieldChange("templateName", event.target.value)}
-              >
-                {closure ? (
-                  <>
-                    <option>Matnog Closure Certificate · 2026</option>
-                    <option>Matnog Closure Certificate · Formal</option>
-                  </>
-                ) : (
-                  <>
-                    <option>Matnog Business Permit · 2026</option>
-                    <option>Matnog Business Permit · Conditional</option>
-                  </>
-                )}
+              <select value={fields.templateName} onChange={(event) => selectTemplate(event.target.value)}>
+                {templateOptions.map((template) => (
+                  <option key={template}>{template}</option>
+                ))}
               </select>
             </label>
             <label>

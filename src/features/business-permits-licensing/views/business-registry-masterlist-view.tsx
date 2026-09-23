@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import Link from "next/link";
 
@@ -38,6 +38,7 @@ import {
   formatPeso,
   sortBusinesses,
 } from "../utils/business-directory-utils";
+import { REGISTERED_BUSINESSES_STORAGE_KEY } from "../utils/business-registration-utils";
 
 const columns = [
   "id",
@@ -100,9 +101,10 @@ const organizationTypes = [
   "One person corporation",
   "Cooperative",
 ];
-const statuses = ["Active", "Expiring soon", "Expired", "Suspended", "Closed"];
+const statuses = ["For application", "Active", "Expiring soon", "Expired", "Suspended", "Closed"];
 
 function formatDate(value: string) {
+  if (!value) return "—";
   return new Intl.DateTimeFormat("en-PH", { month: "short", day: "numeric", year: "numeric" }).format(
     new Date(`${value.slice(0, 10)}T00:00:00`),
   );
@@ -141,6 +143,17 @@ export function BusinessRegistryMasterlistView() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [openAction, setOpenAction] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(
+        window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]",
+      ) as BusinessDirectoryRecord[];
+      if (saved.length > 0) setRecords([...saved, ...MATNOG_BUSINESS_DIRECTORY]);
+    } catch {
+      window.localStorage.removeItem(REGISTERED_BUSINESSES_STORAGE_KEY);
+    }
+  }, []);
 
   const filteredRecords = useMemo(
     () => sortBusinesses(filterBusinesses(records, filters), sortKey, direction),

@@ -1,4 +1,10 @@
-export type BusinessDirectoryStatus = "Active" | "Expiring soon" | "Expired" | "Suspended" | "Closed";
+export type BusinessDirectoryStatus =
+  | "For application"
+  | "Active"
+  | "Expiring soon"
+  | "Expired"
+  | "Suspended"
+  | "Closed";
 
 export type BusinessDirectoryOrganization =
   | "Sole proprietorship"

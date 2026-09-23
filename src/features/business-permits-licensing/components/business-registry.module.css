@@ -341,6 +341,10 @@
   color: #17734b;
   background: #e8f7ef;
 }
+.statusForapplication {
+  color: #265c9b;
+  background: #e8f1fb;
+}
 .riskMedium,
 .statusExpiringsoon {
   color: #956411;

@@ -19,6 +19,7 @@ import {
   FileCheck2,
   FileQuestion,
   FileText,
+  HeartPulse,
   MapPin,
   MapPinned,
   MessageSquareText,
@@ -31,18 +32,22 @@ import {
 import { ConfirmationDialog } from "@/shared/components/confirmation-dialog";
 
 import styles from "../components/application-detail.module.css";
+import { HealthReviewActions, type HealthReviewFields } from "../components/health-review-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
 import type {
   ApplicationGateStatus,
   BploReviewAction,
   BploReviewOverride,
+  HealthReviewAction,
+  HealthReviewOverride,
   ZoningReviewAction,
   ZoningReviewOverride,
 } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
 import {
   applyBploDecision,
+  applyHealthDecision,
   applyZoningDecision,
   BPLO_REVIEW_ACTOR,
   BPLO_REVIEW_STORAGE_KEY,
@@ -50,10 +55,14 @@ import {
   createApplicationTimeline,
   createOfficeReviews,
   createProcessingGates,
+  HEALTH_REVIEW_ACTOR,
+  HEALTH_REVIEW_STORAGE_KEY,
   mergeBploReviewOverrides,
+  mergeHealthReviewOverrides,
   mergeZoningReviewOverrides,
   resolveApplicationRecord,
   validateBploDecision,
+  validateHealthDecision,
   validateZoningDecision,
   ZONING_REVIEW_ACTOR,
   ZONING_REVIEW_STORAGE_KEY,
@@ -108,6 +117,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [loaded, setLoaded] = useState(Boolean(seededRecord));
   const [bploOverride, setBploOverride] = useState<BploReviewOverride>();
   const [zoningOverride, setZoningOverride] = useState<ZoningReviewOverride>();
+  const [healthOverride, setHealthOverride] = useState<HealthReviewOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -122,6 +132,18 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [zoningAffectedRequirementIds, setZoningAffectedRequirementIds] = useState<string[]>([]);
   const [zoningError, setZoningError] = useState("");
   const [pendingZoningAction, setPendingZoningAction] = useState<Exclude<ZoningReviewAction, "note"> | null>(null);
+  const [healthFields, setHealthFields] = useState<HealthReviewFields>({
+    inspectionRequirement: "",
+    inspectionDate: "",
+    sanitaryCategory: "",
+    inspectionResult: "",
+    permitReference: "",
+    complianceAreas: [],
+    remarks: "",
+  });
+  const [healthAffectedRequirementIds, setHealthAffectedRequirementIds] = useState<string[]>([]);
+  const [healthError, setHealthError] = useState("");
+  const [pendingHealthAction, setPendingHealthAction] = useState<Exclude<HealthReviewAction, "note"> | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -152,6 +174,23 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         });
         setZoningAffectedRequirementIds(currentZoningOverride.affectedRequirementIds);
       }
+      const healthOverrides = JSON.parse(
+        window.localStorage.getItem(HEALTH_REVIEW_STORAGE_KEY) ?? "[]",
+      ) as HealthReviewOverride[];
+      const currentHealthOverride = healthOverrides.find((item) => item.applicationId === applicationId.toUpperCase());
+      setHealthOverride(currentHealthOverride);
+      if (currentHealthOverride) {
+        setHealthFields({
+          inspectionRequirement: currentHealthOverride.inspectionRequirement,
+          inspectionDate: currentHealthOverride.inspectionDate,
+          sanitaryCategory: currentHealthOverride.sanitaryCategory,
+          inspectionResult: currentHealthOverride.inspectionResult,
+          permitReference: currentHealthOverride.permitReference,
+          complianceAreas: currentHealthOverride.complianceAreas,
+          remarks: currentHealthOverride.remarks,
+        });
+        setHealthAffectedRequirementIds(currentHealthOverride.affectedRequirementIds);
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -163,20 +202,20 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
 
   const business = businesses.find((item) => item.id === record?.businessId);
   const requirements = useMemo(
-    () => (record ? createApplicationRequirements(record, bploOverride, zoningOverride) : []),
-    [record, bploOverride, zoningOverride],
+    () => (record ? createApplicationRequirements(record, bploOverride, zoningOverride, healthOverride) : []),
+    [record, bploOverride, zoningOverride, healthOverride],
   );
   const reviews = useMemo(
-    () => (record ? createOfficeReviews(record, bploOverride, zoningOverride) : []),
-    [record, bploOverride, zoningOverride],
+    () => (record ? createOfficeReviews(record, bploOverride, zoningOverride, healthOverride) : []),
+    [record, bploOverride, zoningOverride, healthOverride],
   );
   const gates = useMemo(
     () => (record ? createProcessingGates(record, requirements, reviews) : []),
     [record, requirements, reviews],
   );
   const timeline = useMemo(
-    () => (record ? createApplicationTimeline(record, bploOverride, zoningOverride) : []),
-    [record, bploOverride, zoningOverride],
+    () => (record ? createApplicationTimeline(record, bploOverride, zoningOverride, healthOverride) : []),
+    [record, bploOverride, zoningOverride, healthOverride],
   );
 
   function requestDecision(action: BploReviewAction) {
@@ -288,6 +327,74 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     );
   }
 
+  function updateHealthField<K extends keyof HealthReviewFields>(field: K, value: HealthReviewFields[K]) {
+    setHealthFields((current) => ({ ...current, [field]: value }));
+    setHealthError("");
+  }
+
+  function toggleHealthCompliance(area: string) {
+    setHealthFields((current) => ({
+      ...current,
+      complianceAreas: current.complianceAreas.includes(area)
+        ? current.complianceAreas.filter((item) => item !== area)
+        : [...current.complianceAreas, area],
+    }));
+    setHealthError("");
+  }
+
+  function toggleHealthRequirement(id: string) {
+    setHealthAffectedRequirementIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+    setHealthError("");
+  }
+
+  function requestHealthDecision(action: HealthReviewAction) {
+    const error = validateHealthDecision(action, healthFields, healthAffectedRequirementIds);
+    if (error) {
+      setHealthError(error);
+      return;
+    }
+    setHealthError("");
+    if (action === "note") commitHealthDecision(action);
+    else setPendingHealthAction(action);
+  }
+
+  function commitHealthDecision(action: HealthReviewAction) {
+    if (!record) return;
+    const result = applyHealthDecision(record, healthOverride, action, healthFields, healthAffectedRequirementIds);
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let healthOverrides: HealthReviewOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      healthOverrides = JSON.parse(window.localStorage.getItem(HEALTH_REVIEW_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      healthOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      HEALTH_REVIEW_STORAGE_KEY,
+      JSON.stringify(mergeHealthReviewOverrides(healthOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setHealthOverride(result.override);
+    setPendingHealthAction(null);
+    setHealthError("");
+    setNotice(
+      action === "approve"
+        ? "Health and sanitary review approved and routed to Fire Safety Review."
+        : action === "return"
+          ? "Health and sanitary review returned for correction."
+          : action === "not-applicable"
+            ? "Health and sanitary review marked not applicable and workflow advanced."
+            : "Health review internal note saved to the audit trail.",
+    );
+  }
+
   if (!loaded)
     return (
       <main className={styles.page}>
@@ -316,6 +423,10 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const bploReviewActive = !terminal && reviews[0]?.status !== "Approved";
   const zoningReviewActive =
     !terminal && reviews[0]?.status === "Approved" && !["Approved", "Not applicable"].includes(reviews[1]?.status);
+  const healthReviewActive =
+    !terminal &&
+    ["Approved", "Not applicable"].includes(reviews[1]?.status) &&
+    !["Approved", "Not applicable"].includes(reviews[2]?.status);
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -334,12 +445,20 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          {zoningReviewActive ? <MapPinned size={14} /> : <ShieldCheck size={14} />}
-          {zoningReviewActive
-            ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
-            : bploReviewActive
-              ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
-              : `Current office · ${record.assignedOfficer}`}
+          {healthReviewActive ? (
+            <HeartPulse size={14} />
+          ) : zoningReviewActive ? (
+            <MapPinned size={14} />
+          ) : (
+            <ShieldCheck size={14} />
+          )}
+          {healthReviewActive
+            ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
+            : zoningReviewActive
+              ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+              : bploReviewActive
+                ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+                : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -513,7 +632,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
               {reviews.map((review, index) => (
                 <article
                   className={
-                    (index === 0 && bploReviewActive) || (index === 1 && zoningReviewActive)
+                    (index === 0 && bploReviewActive) ||
+                    (index === 1 && zoningReviewActive) ||
+                    (index === 2 && healthReviewActive)
                       ? styles.activeReviewCard
                       : ""
                   }
@@ -713,6 +834,18 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                       </div>
                     </div>
                   ) : null}
+                  {index === 2 && healthReviewActive ? (
+                    <HealthReviewActions
+                      fields={healthFields}
+                      requirements={requirements}
+                      affectedRequirementIds={healthAffectedRequirementIds}
+                      error={healthError}
+                      onFieldChange={updateHealthField}
+                      onToggleCompliance={toggleHealthCompliance}
+                      onToggleRequirement={toggleHealthRequirement}
+                      onAction={requestHealthDecision}
+                    />
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -905,6 +1038,37 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         destructive={pendingZoningAction === "return"}
         onConfirm={() => {
           if (pendingZoningAction) commitZoningDecision(pendingZoningAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingHealthAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingHealthAction(null);
+        }}
+        title={
+          pendingHealthAction === "approve"
+            ? "Approve health and sanitary review?"
+            : pendingHealthAction === "not-applicable"
+              ? "Mark health review as not applicable?"
+              : "Return health review for correction?"
+        }
+        description={
+          pendingHealthAction === "approve"
+            ? "This records the sanitary findings and routes the application to Fire Safety Review."
+            : pendingHealthAction === "not-applicable"
+              ? "This records the exemption reason and routes the application to Fire Safety Review."
+              : `This returns ${healthAffectedRequirementIds.length} selected ${healthAffectedRequirementIds.length === 1 ? "requirement" : "requirements"} to the applicant while keeping the case assigned to the Municipal Health Office.`
+        }
+        confirmLabel={
+          pendingHealthAction === "approve"
+            ? "Approve and route"
+            : pendingHealthAction === "not-applicable"
+              ? "Confirm not applicable"
+              : "Return for correction"
+        }
+        destructive={pendingHealthAction === "return"}
+        onConfirm={() => {
+          if (pendingHealthAction) commitHealthDecision(pendingHealthAction);
         }}
       />
     </main>

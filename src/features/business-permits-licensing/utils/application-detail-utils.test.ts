@@ -1,6 +1,7 @@
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import {
   applyBploDecision,
+  applyHealthDecision,
   applyZoningDecision,
   createApplicationRequirements,
   createApplicationTimeline,
@@ -8,6 +9,7 @@ import {
   createProcessingGates,
   resolveApplicationRecord,
   validateBploDecision,
+  validateHealthDecision,
   validateZoningDecision,
 } from "./application-detail-utils";
 import assert from "node:assert/strict";
@@ -126,4 +128,35 @@ test("zoning not-applicable decisions advance with an audit event", () => {
   assert.equal(result.override.status, "Not applicable");
   assert.equal(result.record.currentStage, "Health and sanitary review");
   assert.match(result.event.action, /not applicable/i);
+});
+
+const completeHealthFields = {
+  inspectionRequirement: "On-site inspection required",
+  inspectionDate: "2026-09-23",
+  sanitaryCategory: "Food establishment",
+  inspectionResult: "Passed",
+  permitReference: "SP-2026-00318",
+  complianceAreas: ["Sanitation", "Water supply", "Waste disposal", "Food handling", "Employee health"],
+  remarks: "All required sanitary controls were verified during inspection.",
+};
+
+test("health approval advances the application to fire safety review", () => {
+  const record = { ...MATNOG_APPLICATION_DIRECTORY[0], status: "Under review" as const };
+  const result = applyHealthDecision(record, undefined, "approve", completeHealthFields, []);
+  assert.equal(result.record.status, "Under review");
+  assert.equal(result.record.currentStage, "Fire safety review");
+  assert.equal(result.record.assignedOfficer, "FO2 Catherine O. Fortes");
+  assert.equal(result.override.status, "Approved");
+});
+
+test("health approval requires complete inspection findings", () => {
+  assert.ok(validateHealthDecision("approve", { ...completeHealthFields, inspectionDate: "" }, []));
+  assert.ok(validateHealthDecision("approve", { ...completeHealthFields, complianceAreas: ["Sanitation"] }, []));
+  assert.equal(validateHealthDecision("approve", completeHealthFields, []), "");
+});
+
+test("health correction return requires a reason and selected requirement", () => {
+  assert.ok(validateHealthDecision("return", { ...completeHealthFields, remarks: "Short" }, []));
+  assert.ok(validateHealthDecision("return", completeHealthFields, []));
+  assert.equal(validateHealthDecision("return", completeHealthFields, ["REQ-1"]), "");
 });

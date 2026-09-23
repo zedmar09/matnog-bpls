@@ -524,6 +524,9 @@
   display: grid;
   gap: 5px;
 }
+.zoningFieldGrid .fullWidthField {
+  grid-column: 1 / -1;
+}
 .zoningFieldGrid span {
   color: #646c7e;
   font-size: 7px;
@@ -578,6 +581,41 @@
   margin: 12px 0 0;
   padding: 0;
   border: 0;
+}
+.complianceChecklist {
+  margin: 12px 0 0;
+  padding: 10px;
+  border: 1px solid #e3e5ea;
+  background: #fafbfc;
+}
+.complianceChecklist legend {
+  padding: 0 4px;
+  color: #646c7e;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.complianceChecklist > div {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+.complianceChecklist label {
+  min-height: 31px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e0e4e9;
+  background: #fff;
+  color: #596174;
+  font-size: 7px;
+  cursor: pointer;
+}
+.complianceChecklist input {
+  margin: 0;
+  accent-color: #7047d7;
 }
 .affectedRequirements > div {
   margin-top: 6px;
@@ -927,6 +965,9 @@
   .affectedRequirements > div {
     grid-template-columns: 1fr 1fr;
   }
+  .complianceChecklist > div {
+    grid-template-columns: repeat(2, 1fr);
+  }
   .sideColumn {
     grid-template-columns: 1fr;
   }
@@ -959,7 +1000,8 @@
   .reviewGrid,
   .sideColumn .factGrid,
   .affectedRequirements > div,
-  .zoningFieldGrid {
+  .zoningFieldGrid,
+  .complianceChecklist > div {
     grid-template-columns: 1fr;
   }
   .activeReviewCard > dl {

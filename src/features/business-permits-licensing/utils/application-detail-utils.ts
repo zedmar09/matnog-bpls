@@ -7,6 +7,9 @@ import type {
   BploDecisionResult,
   BploReviewAction,
   BploReviewOverride,
+  HealthDecisionResult,
+  HealthReviewAction,
+  HealthReviewOverride,
   ZoningDecisionResult,
   ZoningReviewAction,
   ZoningReviewOverride,
@@ -38,6 +41,15 @@ export const BPLO_REVIEW_STORAGE_KEY = "matnog-bpls-bplo-review-overrides-v1";
 export const BPLO_REVIEW_ACTOR = "Maricel A. Gacosta";
 export const ZONING_REVIEW_STORAGE_KEY = "matnog-bpls-zoning-review-overrides-v1";
 export const ZONING_REVIEW_ACTOR = "Angela F. Dela Cruz";
+export const HEALTH_REVIEW_STORAGE_KEY = "matnog-bpls-health-review-overrides-v1";
+export const HEALTH_REVIEW_ACTOR = "Dr. Elena M. Frilles";
+export const HEALTH_COMPLIANCE_AREAS = [
+  "Sanitation",
+  "Water supply",
+  "Waste disposal",
+  "Food handling",
+  "Employee health",
+] as const;
 
 function sequence(record: ApplicationDirectoryRecord) {
   const digits = Number(record.id.replace(/\D/g, "").slice(-5));
@@ -59,6 +71,7 @@ export function createApplicationRequirements(
   record: ApplicationDirectoryRecord,
   override?: BploReviewOverride,
   zoningOverride?: ZoningReviewOverride,
+  healthOverride?: HealthReviewOverride,
 ): ApplicationRequirementDetail[] {
   const seed = sequence(record);
   const total = Math.min(REQUIREMENTS.length, Math.max(1, record.requirementsTotal));
@@ -78,6 +91,11 @@ export function createApplicationRequirements(
     if (
       zoningOverride?.status === "For correction" &&
       zoningOverride.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
+    )
+      status = "Returned";
+    if (
+      healthOverride?.status === "For correction" &&
+      healthOverride.affectedRequirementIds.includes(`REQ-${record.id.slice(-5)}-${index + 1}`)
     )
       status = "Returned";
     return {
@@ -116,6 +134,7 @@ export function createOfficeReviews(
   record: ApplicationDirectoryRecord,
   override?: BploReviewOverride,
   zoningOverride?: ZoningReviewOverride,
+  healthOverride?: HealthReviewOverride,
 ): ApplicationOfficeReview[] {
   let statuses: ApplicationReviewStatus[] = reviewStatuses(record);
   if (override?.status === "Approved")
@@ -126,9 +145,21 @@ export function createOfficeReviews(
     const nextStatus = ["Approved", "Not applicable"].includes(zoningOverride.status) ? "In review" : "Not started";
     statuses = ["Approved", zoningOverride.status, nextStatus, "Not started", "Not started", "Not started"];
   }
+  if (healthOverride) {
+    const nextStatus = ["Approved", "Not applicable"].includes(healthOverride.status) ? "In review" : "Not started";
+    statuses = [
+      "Approved",
+      zoningOverride?.status === "Not applicable" ? "Not applicable" : "Approved",
+      healthOverride.status,
+      nextStatus,
+      "Not started",
+      "Not started",
+    ];
+  }
   const seed = sequence(record);
   return REVIEW_OFFICES.map(([office, assignee], index) => {
-    const officeOverride = index === 0 ? override : index === 1 ? zoningOverride : undefined;
+    const officeOverride =
+      index === 0 ? override : index === 1 ? zoningOverride : index === 2 ? healthOverride : undefined;
     const status = officeOverride?.status ?? statuses[index];
     return {
       id: `REV-${record.id.slice(-5)}-${index + 1}`,
@@ -210,6 +241,7 @@ export function createApplicationTimeline(
   record: ApplicationDirectoryRecord,
   override?: BploReviewOverride,
   zoningOverride?: ZoningReviewOverride,
+  healthOverride?: HealthReviewOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -252,7 +284,7 @@ export function createApplicationTimeline(
   const sourceStatus = override?.sourceStatus ?? record.status;
   if (override && sourceStatus !== record.status) {
     const base = createApplicationTimeline({ ...record, status: sourceStatus });
-    return [...base, ...override.events, ...(zoningOverride?.events ?? [])];
+    return [...base, ...override.events, ...(zoningOverride?.events ?? []), ...(healthOverride?.events ?? [])];
   }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
     id: `EVT-${record.id.slice(-5)}-${index + 1}`,
@@ -265,7 +297,12 @@ export function createApplicationTimeline(
         ? record.filedAt
         : `2026-09-${String(12 + ((seed + index) % 10)).padStart(2, "0")} ${String(9 + (index % 7)).padStart(2, "0")}:${index % 2 ? "40" : "15"}`,
   }));
-  return [...generated, ...(override?.events ?? []), ...(zoningOverride?.events ?? [])];
+  return [
+    ...generated,
+    ...(override?.events ?? []),
+    ...(zoningOverride?.events ?? []),
+    ...(healthOverride?.events ?? []),
+  ];
 }
 
 export function validateBploDecision(
@@ -446,5 +483,116 @@ export function applyZoningDecision(
 }
 
 export function mergeZoningReviewOverrides(overrides: readonly ZoningReviewOverride[], next: ZoningReviewOverride) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+type HealthDecisionFields = Pick<
+  HealthReviewOverride,
+  | "inspectionRequirement"
+  | "inspectionDate"
+  | "sanitaryCategory"
+  | "inspectionResult"
+  | "permitReference"
+  | "complianceAreas"
+  | "remarks"
+>;
+
+export function validateHealthDecision(
+  action: HealthReviewAction,
+  fields: HealthDecisionFields,
+  affectedRequirementIds: readonly string[],
+) {
+  if (action === "note" && fields.remarks.trim().length < 3) return "Enter an internal health review note.";
+  if (action === "return" && fields.remarks.trim().length < 10)
+    return "Enter a correction reason of at least 10 characters.";
+  if (action === "return" && affectedRequirementIds.length === 0) return "Select at least one affected requirement.";
+  if (action === "not-applicable" && fields.remarks.trim().length < 10)
+    return "Explain why health and sanitary review is not applicable.";
+  if (["approve", "not-applicable"].includes(action)) {
+    if (!fields.inspectionRequirement.trim()) return "Select an inspection requirement.";
+    if (fields.inspectionRequirement === "On-site inspection required" && !fields.inspectionDate)
+      return "Enter the completed inspection date.";
+    if (!fields.sanitaryCategory.trim()) return "Select a sanitary classification.";
+    if (!fields.inspectionResult.trim()) return "Select an inspection result.";
+    if (!fields.permitReference.trim()) return "Enter the sanitary permit or review reference.";
+  }
+  if (action === "approve" && fields.inspectionResult === "Failed")
+    return "A failed inspection cannot be approved. Return the application for correction.";
+  if (action === "approve" && fields.complianceAreas.length !== HEALTH_COMPLIANCE_AREAS.length)
+    return "Verify every sanitary compliance area before approval.";
+  return "";
+}
+
+export function applyHealthDecision(
+  record: ApplicationDirectoryRecord,
+  current: HealthReviewOverride | undefined,
+  action: HealthReviewAction,
+  fields: HealthDecisionFields,
+  affectedRequirementIds: string[],
+  occurredAt = "2026-09-23 18:05",
+): HealthDecisionResult {
+  const status: ApplicationReviewStatus =
+    action === "approve"
+      ? "Approved"
+      : action === "return"
+        ? "For correction"
+        : action === "not-applicable"
+          ? "Not applicable"
+          : (current?.status ?? "In review");
+  const actionLabels: Record<HealthReviewAction, string> = {
+    approve: "Health and sanitary review approved",
+    return: "Health review returned for correction",
+    "not-applicable": "Health review marked not applicable",
+    note: "Health review internal note added",
+  };
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-HEALTH-${(current?.events.length ?? 0) + 1}`,
+    action: actionLabels[action],
+    detail:
+      action === "return"
+        ? `${fields.remarks.trim()} (${affectedRequirementIds.length} affected ${affectedRequirementIds.length === 1 ? "requirement" : "requirements"}).`
+        : fields.remarks.trim() || "Health and sanitary findings recorded with no unresolved deficiencies.",
+    actor: HEALTH_REVIEW_ACTOR,
+    office: "Municipal Health Office",
+    occurredAt,
+  };
+  const override: HealthReviewOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    status,
+    inspectionRequirement: fields.inspectionRequirement.trim(),
+    inspectionDate: fields.inspectionDate,
+    sanitaryCategory: fields.sanitaryCategory.trim(),
+    inspectionResult: fields.inspectionResult.trim(),
+    permitReference: fields.permitReference.trim(),
+    complianceAreas: [...fields.complianceAreas],
+    remarks: fields.remarks.trim() || current?.remarks || "Health and sanitary review completed without findings.",
+    affectedRequirementIds: action === "return" ? [...affectedRequirementIds] : [],
+    actor: HEALTH_REVIEW_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const completed = action === "approve" || action === "not-applicable";
+  const updatedRecord: ApplicationDirectoryRecord = completed
+    ? {
+        ...record,
+        status: "Under review",
+        currentStage: "Fire safety review",
+        assignedOfficer: "FO2 Catherine O. Fortes",
+        updatedAt: occurredAt,
+      }
+    : action === "return"
+      ? {
+          ...record,
+          status: "For correction",
+          currentStage: "Health and sanitary review",
+          assignedOfficer: HEALTH_REVIEW_ACTOR,
+          updatedAt: occurredAt,
+        }
+      : { ...record, updatedAt: occurredAt };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergeHealthReviewOverrides(overrides: readonly HealthReviewOverride[], next: HealthReviewOverride) {
   return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
 }

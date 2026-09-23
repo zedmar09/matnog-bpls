@@ -77,3 +77,42 @@ export type PublicPermitVerificationRecord = {
   signatoryTitle: string;
   lastVerifiedAt: string;
 };
+
+export type PermitLifecycleAction = "suspend" | "reinstate" | "revoke";
+
+export type PermitLifecycleFields = {
+  grounds: string;
+  orderReference: string;
+  effectiveDate: string;
+  endDate: string;
+  reason: string;
+  approvingOfficer: string;
+};
+
+export type PermitLifecycleEvent = {
+  id: string;
+  action: "Issued" | "Suspended" | "Reinstated" | "Revoked";
+  resultingStatus: PermitRegistryStatus;
+  orderReference: string;
+  grounds: string;
+  reason: string;
+  effectiveDate: string;
+  endDate: string;
+  actor: string;
+  occurredAt: string;
+};
+
+export type PermitLifecycleOverride = {
+  documentNumber: string;
+  sourceStatus: PermitRegistryStatus;
+  status: PermitRegistryStatus;
+  verificationStatus: PermitVerificationStatus;
+  events: PermitLifecycleEvent[];
+  updatedAt: string;
+};
+
+export type PermitLifecycleResult = {
+  record: PermitRegistryRecord;
+  override: PermitLifecycleOverride;
+  event: PermitLifecycleEvent;
+};

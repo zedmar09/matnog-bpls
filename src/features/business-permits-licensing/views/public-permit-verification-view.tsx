@@ -14,10 +14,14 @@ import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directo
 import { MATNOG_PERMIT_REGISTRY } from "../data/matnog-permit-registry";
 import type { PermitDocumentOverride, PermitReleaseOverride } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
-import type { PublicPermitVerificationRecord } from "../types/permit-registry";
+import type { PermitLifecycleOverride, PublicPermitVerificationRecord } from "../types/permit-registry";
 import { PERMIT_DOCUMENT_STORAGE_KEY, PERMIT_RELEASE_STORAGE_KEY } from "../utils/application-detail-utils";
 import { mergeApplicationRecords, SAVED_APPLICATIONS_STORAGE_KEY } from "../utils/application-wizard-utils";
-import { mergePermitRegistryRecords, resolvePublicPermitVerification } from "../utils/permit-registry-utils";
+import {
+  mergePermitRegistryRecords,
+  PERMIT_LIFECYCLE_STORAGE_KEY,
+  resolvePublicPermitVerification,
+} from "../utils/permit-registry-utils";
 
 function formatDate(value: string) {
   if (!value) return "Not applicable";
@@ -231,8 +235,17 @@ export function PublicPermitVerificationView({ token }: { token: string }) {
       const releases = JSON.parse(
         window.localStorage.getItem(PERMIT_RELEASE_STORAGE_KEY) ?? "[]",
       ) as PermitReleaseOverride[];
+      const lifecycleOverrides = JSON.parse(
+        window.localStorage.getItem(PERMIT_LIFECYCLE_STORAGE_KEY) ?? "[]",
+      ) as PermitLifecycleOverride[];
       const applications = mergeApplicationRecords(MATNOG_APPLICATION_DIRECTORY, savedApplications);
-      const registry = mergePermitRegistryRecords(MATNOG_PERMIT_REGISTRY, applications, documents, releases);
+      const registry = mergePermitRegistryRecords(
+        MATNOG_PERMIT_REGISTRY,
+        applications,
+        documents,
+        releases,
+        lifecycleOverrides,
+      );
       setResult(resolvePublicPermitVerification(registry, token));
     } catch {
       setResult(seededResult);

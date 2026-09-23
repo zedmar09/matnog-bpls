@@ -2,17 +2,27 @@ import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directo
 import { MATNOG_PERMIT_REGISTRY } from "../data/matnog-permit-registry";
 import type { PermitDocumentOverride, PermitReleaseOverride } from "../types/application-detail";
 import {
+  applyPermitLifecycleAction,
+  applyPermitLifecycleOverrides,
+  createDefaultPermitLifecycleFields,
+  createPermitLifecycleHistory,
   EMPTY_PERMIT_REGISTRY_FILTERS,
   filterPermitRegistry,
   mergePermitRegistryRecords,
   resolvePublicPermitVerification,
   sortPermitRegistry,
   summarizePermitRegistry,
+  validatePermitLifecycleAction,
 } from "./permit-registry-utils";
 import assert from "node:assert/strict";
 import test from "node:test";
 
 const application = MATNOG_APPLICATION_DIRECTORY[0];
+const businessPermit = () => {
+  const record = MATNOG_PERMIT_REGISTRY.find((item) => item.documentType === "Business Permit");
+  if (!record) throw new Error("Expected a seeded business permit fixture.");
+  return record;
+};
 const document: PermitDocumentOverride = {
   applicationId: application.id,
   sourceStatus: application.status,
@@ -117,4 +127,63 @@ test("public verification distinguishes restricted, expired, and unknown documen
     "Expired",
   );
   assert.equal(resolvePublicPermitVerification([base], "UNKNOWN-TOKEN"), undefined);
+});
+
+test("suspension and reinstatement update registry and public verification from one override", () => {
+  const active = {
+    ...businessPermit(),
+    status: "Active" as const,
+  };
+  const fields = {
+    ...createDefaultPermitLifecycleFields(),
+    grounds: "Violation of permit conditions",
+    orderReference: "MO-2026-0091",
+    reason: "Joint inspection confirmed an unresolved permit condition.",
+  };
+  assert.equal(validatePermitLifecycleAction(active, "suspend", fields), "");
+  const suspended = applyPermitLifecycleAction(active, undefined, "suspend", fields);
+  assert.equal(suspended.record.status, "Suspended");
+  assert.equal(suspended.record.verificationStatus, "Inactive");
+  assert.equal(resolvePublicPermitVerification([suspended.record], active.qrToken)?.verificationState, "Suspended");
+  const reinstated = applyPermitLifecycleAction(suspended.record, suspended.override, "reinstate", {
+    ...fields,
+    grounds: "",
+    orderReference: "MO-2026-0091-R",
+    reason: "Compliance evidence was verified and the restriction was lifted.",
+  });
+  assert.equal(reinstated.record.status, "Active");
+  assert.equal(reinstated.record.verificationStatus, "Active");
+  assert.equal(createPermitLifecycleHistory(reinstated.record, reinstated.override).length, 3);
+});
+
+test("revocation is terminal and lifecycle validation requires controlling evidence", () => {
+  const active = {
+    ...businessPermit(),
+    status: "Active" as const,
+  };
+  const empty = createDefaultPermitLifecycleFields();
+  assert.ok(validatePermitLifecycleAction(active, "revoke", empty));
+  const fields = {
+    ...empty,
+    grounds: "Material misrepresentation",
+    orderReference: "MO-2026-0104",
+    reason: "The approved revocation order found material filing misrepresentation.",
+  };
+  const revoked = applyPermitLifecycleAction(active, undefined, "revoke", fields);
+  assert.equal(revoked.record.status, "Revoked");
+  assert.ok(validatePermitLifecycleAction(revoked.record, "reinstate", fields));
+});
+
+test("lifecycle overrides update only their controlled document", () => {
+  const records = MATNOG_PERMIT_REGISTRY.slice(0, 2);
+  const target = records.find((item) => item.documentType === "Business Permit") ?? records[0];
+  const result = applyPermitLifecycleAction(target, undefined, "suspend", {
+    ...createDefaultPermitLifecycleFields(),
+    grounds: "Violation of permit conditions",
+    orderReference: "MO-2026-0110",
+    reason: "A documented violation requires temporary permit suspension.",
+  });
+  const updated = applyPermitLifecycleOverrides(records, [result.override]);
+  assert.equal(updated.find((item) => item.documentNumber === target.documentNumber)?.status, "Suspended");
+  assert.equal(updated.filter((item) => item.status === "Suspended").length >= 1, true);
 });

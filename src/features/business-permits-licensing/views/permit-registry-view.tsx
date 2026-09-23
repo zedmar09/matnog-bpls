@@ -24,13 +24,19 @@ import { MATNOG_BARANGAYS } from "../data/matnog-business-directory";
 import { MATNOG_PERMIT_REGISTRY } from "../data/matnog-permit-registry";
 import type { PermitDocumentOverride, PermitReleaseOverride } from "../types/application-detail";
 import type { ApplicationDirectoryRecord } from "../types/application-directory";
-import type { PermitRegistryFilters, PermitRegistryRecord, PermitRegistrySortKey } from "../types/permit-registry";
+import type {
+  PermitLifecycleOverride,
+  PermitRegistryFilters,
+  PermitRegistryRecord,
+  PermitRegistrySortKey,
+} from "../types/permit-registry";
 import { PERMIT_DOCUMENT_STORAGE_KEY, PERMIT_RELEASE_STORAGE_KEY } from "../utils/application-detail-utils";
 import { mergeApplicationRecords, SAVED_APPLICATIONS_STORAGE_KEY } from "../utils/application-wizard-utils";
 import {
   EMPTY_PERMIT_REGISTRY_FILTERS,
   filterPermitRegistry,
   mergePermitRegistryRecords,
+  PERMIT_LIFECYCLE_STORAGE_KEY,
   sortPermitRegistry,
   summarizePermitRegistry,
 } from "../utils/permit-registry-utils";
@@ -111,7 +117,12 @@ export function PermitRegistryView() {
       const releases = JSON.parse(
         window.localStorage.getItem(PERMIT_RELEASE_STORAGE_KEY) ?? "[]",
       ) as PermitReleaseOverride[];
-      setRecords(mergePermitRegistryRecords(MATNOG_PERMIT_REGISTRY, applications, documents, releases));
+      const lifecycleOverrides = JSON.parse(
+        window.localStorage.getItem(PERMIT_LIFECYCLE_STORAGE_KEY) ?? "[]",
+      ) as PermitLifecycleOverride[];
+      setRecords(
+        mergePermitRegistryRecords(MATNOG_PERMIT_REGISTRY, applications, documents, releases, lifecycleOverrides),
+      );
     } catch {
       setRecords([...MATNOG_PERMIT_REGISTRY]);
     }
@@ -356,7 +367,7 @@ export function PermitRegistryView() {
                   {visibleRecords.map((record) => (
                     <tr key={record.documentNumber}>
                       <td className={styles.documentCell}>
-                        <Link className={styles.documentLink} href={`/applications/${record.applicationId}`}>
+                        <Link className={styles.documentLink} href={`/permits/${record.documentNumber}`}>
                           {record.documentNumber}
                         </Link>
                         <small>
@@ -414,7 +425,7 @@ export function PermitRegistryView() {
                 <article className={styles.mobileCard} key={record.documentNumber}>
                   <div className={styles.mobileCardHeader}>
                     <div>
-                      <Link className={styles.documentLink} href={`/applications/${record.applicationId}`}>
+                      <Link className={styles.documentLink} href={`/permits/${record.documentNumber}`}>
                         {record.documentNumber}
                       </Link>
                       <h2>{record.businessName}</h2>

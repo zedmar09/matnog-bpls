@@ -36,6 +36,7 @@ import { ConfirmationDialog } from "@/shared/components/confirmation-dialog";
 import styles from "../components/application-detail.module.css";
 import { FireReviewActions, type FireReviewFields } from "../components/fire-review-actions";
 import { HealthReviewActions, type HealthReviewFields } from "../components/health-review-actions";
+import { MayorReviewActions } from "../components/mayor-review-actions";
 import { PaymentConfirmationActions } from "../components/payment-confirmation-actions";
 import { TreasurerAssessmentActions } from "../components/treasurer-assessment-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
@@ -48,6 +49,8 @@ import type {
   FireReviewOverride,
   HealthReviewAction,
   HealthReviewOverride,
+  MayorReviewAction,
+  MayorReviewOverride,
   PaymentConfirmationAction,
   PaymentConfirmationOverride,
   TreasurerAssessmentAction,
@@ -60,6 +63,7 @@ import {
   applyBploDecision,
   applyFireDecision,
   applyHealthDecision,
+  applyMayorDecision,
   applyPaymentConfirmation,
   applyPaymentReversal,
   applyTreasurerAssessment,
@@ -72,6 +76,7 @@ import {
   createApplicationRequirements,
   createApplicationTimeline,
   createDefaultAssessmentFields,
+  createDefaultMayorFields,
   createDefaultPaymentFields,
   createOfficeReviews,
   createProcessingGates,
@@ -79,9 +84,14 @@ import {
   FIRE_REVIEW_STORAGE_KEY,
   HEALTH_REVIEW_ACTOR,
   HEALTH_REVIEW_STORAGE_KEY,
+  invalidateMayorApprovalForPaymentReversal,
+  MAYOR_REVIEW_ACTOR,
+  MAYOR_REVIEW_STORAGE_KEY,
+  type MayorReviewFields,
   mergeBploReviewOverrides,
   mergeFireReviewOverrides,
   mergeHealthReviewOverrides,
+  mergeMayorReviewOverrides,
   mergePaymentConfirmationOverrides,
   mergeTreasurerAssessmentOverrides,
   mergeZoningReviewOverrides,
@@ -95,6 +105,7 @@ import {
   validateBploDecision,
   validateFireDecision,
   validateHealthDecision,
+  validateMayorDecision,
   validatePaymentConfirmation,
   validatePaymentReversal,
   validateTreasurerAssessment,
@@ -156,6 +167,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [fireOverride, setFireOverride] = useState<FireReviewOverride>();
   const [treasurerOverride, setTreasurerOverride] = useState<TreasurerAssessmentOverride>();
   const [paymentOverride, setPaymentOverride] = useState<PaymentConfirmationOverride>();
+  const [mayorOverride, setMayorOverride] = useState<MayorReviewOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -213,6 +225,11 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     null,
   );
   const [pendingReversalTransactionId, setPendingReversalTransactionId] = useState("");
+  const [mayorFields, setMayorFields] = useState<MayorReviewFields>(() =>
+    createDefaultMayorFields(seededRecord ?? MATNOG_APPLICATION_DIRECTORY[0]),
+  );
+  const [mayorError, setMayorError] = useState("");
+  const [pendingMayorAction, setPendingMayorAction] = useState<MayorReviewAction | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -326,6 +343,25 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       } else if (resolvedRecord) {
         setPaymentFields(createDefaultPaymentFields(resolvedRecord));
       }
+      const mayorOverrides = JSON.parse(
+        window.localStorage.getItem(MAYOR_REVIEW_STORAGE_KEY) ?? "[]",
+      ) as MayorReviewOverride[];
+      const currentMayorOverride = mayorOverrides.find((item) => item.applicationId === applicationId.toUpperCase());
+      setMayorOverride(currentMayorOverride);
+      if (currentMayorOverride) {
+        setMayorFields({
+          decisionReference: currentMayorOverride.decisionReference,
+          decisionDate: currentMayorOverride.decisionDate,
+          effectiveFrom: currentMayorOverride.effectiveFrom,
+          effectiveUntil: currentMayorOverride.effectiveUntil,
+          permitClassification: currentMayorOverride.permitClassification,
+          returnDestination: currentMayorOverride.returnDestination,
+          conditions: currentMayorOverride.conditions,
+          remarks: currentMayorOverride.remarks,
+        });
+      } else if (resolvedRecord) {
+        setMayorFields(createDefaultMayorFields(resolvedRecord));
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -353,9 +389,17 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const reviews = useMemo(
     () =>
       record
-        ? createOfficeReviews(record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride)
+        ? createOfficeReviews(
+            record,
+            bploOverride,
+            zoningOverride,
+            healthOverride,
+            fireOverride,
+            treasurerOverride,
+            mayorOverride,
+          )
         : [],
-    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride],
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride, mayorOverride],
   );
   const gates = useMemo(
     () => (record ? createProcessingGates(record, requirements, reviews) : []),
@@ -372,9 +416,19 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             fireOverride,
             treasurerOverride,
             paymentOverride,
+            mayorOverride,
           )
         : [],
-    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride, paymentOverride],
+    [
+      record,
+      bploOverride,
+      zoningOverride,
+      healthOverride,
+      fireOverride,
+      treasurerOverride,
+      paymentOverride,
+      mayorOverride,
+    ],
   );
   const assessmentTotals = useMemo(() => calculateAssessmentTotals(treasurerFields), [treasurerFields]);
   const paymentSummary = useMemo(
@@ -823,10 +877,79 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     if (!record || !paymentOverride || !pendingReversalTransactionId) return;
     const result = applyPaymentReversal(record, paymentOverride, pendingReversalTransactionId, reversalReason);
     persistPaymentResult(result);
+    if (mayorOverride?.status === "Approved") {
+      const invalidatedMayor = invalidateMayorApprovalForPaymentReversal(
+        result.record,
+        mayorOverride,
+        result.override.updatedAt,
+      );
+      let mayorOverrides: MayorReviewOverride[] = [];
+      try {
+        mayorOverrides = JSON.parse(window.localStorage.getItem(MAYOR_REVIEW_STORAGE_KEY) ?? "[]");
+      } catch {
+        mayorOverrides = [];
+      }
+      window.localStorage.setItem(
+        MAYOR_REVIEW_STORAGE_KEY,
+        JSON.stringify(mergeMayorReviewOverrides(mayorOverrides, invalidatedMayor)),
+      );
+      setMayorOverride(invalidatedMayor);
+    }
     setPendingReversalTransactionId("");
     setReversalReason("");
     setPaymentError("");
     setNotice("Confirmed payment reversed; Mayor approval is locked until the balance is settled again.");
+  }
+
+  function updateMayorField<K extends keyof MayorReviewFields>(field: K, value: MayorReviewFields[K]) {
+    setMayorFields((current) => ({ ...current, [field]: value }));
+    setMayorError("");
+  }
+
+  function requestMayorDecision(action: MayorReviewAction) {
+    if (!record) return;
+    const error = validateMayorDecision(action, mayorFields, record.type);
+    if (error) {
+      setMayorError(error);
+      return;
+    }
+    setMayorError("");
+    setPendingMayorAction(action);
+  }
+
+  function commitMayorDecision(action: MayorReviewAction) {
+    if (!record) return;
+    const result = applyMayorDecision(record, mayorOverride, action, mayorFields);
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let mayorOverrides: MayorReviewOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      mayorOverrides = JSON.parse(window.localStorage.getItem(MAYOR_REVIEW_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      mayorOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      MAYOR_REVIEW_STORAGE_KEY,
+      JSON.stringify(mergeMayorReviewOverrides(mayorOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setMayorOverride(result.override);
+    setPendingMayorAction(null);
+    setMayorError("");
+    setNotice(
+      action === "approve"
+        ? record.type === "Closure"
+          ? "Final approval recorded and routed to closure certificate generation."
+          : "Final approval recorded and routed to permit generation."
+        : action === "return"
+          ? `Application returned to ${mayorFields.returnDestination}.`
+          : "Mayor decision deferred with the reason recorded in the audit trail.",
+    );
   }
 
   if (!loaded)
@@ -872,6 +995,13 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const paymentConfirmationActive =
     !terminal && reviews[4]?.status === "Approved" && ["Pending payment", "Reversed"].includes(record.paymentStatus);
   const paymentWorkspaceVisible = paymentConfirmationActive || Boolean(paymentOverride?.transactions.length);
+  const mayorReviewActive =
+    !terminal &&
+    record.status !== "Ready to issue" &&
+    record.currentStage === "Mayor's final approval" &&
+    record.paymentStatus === "Paid" &&
+    reviews.slice(0, 5).every((review) => ["Approved", "Not applicable"].includes(review.status)) &&
+    reviews[5]?.status !== "Approved";
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -890,7 +1020,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          {paymentConfirmationActive ? (
+          {mayorReviewActive ? (
+            <ShieldCheck size={14} />
+          ) : paymentConfirmationActive ? (
             <CreditCard size={14} />
           ) : treasurerReviewActive ? (
             <Banknote size={14} />
@@ -903,19 +1035,21 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           ) : (
             <ShieldCheck size={14} />
           )}
-          {paymentConfirmationActive
-            ? `Payment confirmation active · ${PAYMENT_CONFIRMATION_ACTOR}`
-            : treasurerReviewActive
-              ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
-              : fireReviewActive
-                ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
-                : healthReviewActive
-                  ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
-                  : zoningReviewActive
-                    ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
-                    : bploReviewActive
-                      ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
-                      : `Current office · ${record.assignedOfficer}`}
+          {mayorReviewActive
+            ? `Mayor final approval active · ${MAYOR_REVIEW_ACTOR}`
+            : paymentConfirmationActive
+              ? `Payment confirmation active · ${PAYMENT_CONFIRMATION_ACTOR}`
+              : treasurerReviewActive
+                ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
+                : fireReviewActive
+                  ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
+                  : healthReviewActive
+                    ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
+                    : zoningReviewActive
+                      ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+                      : bploReviewActive
+                        ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+                        : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -1094,7 +1228,8 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                     (index === 1 && zoningReviewActive) ||
                     (index === 2 && healthReviewActive) ||
                     (index === 3 && fireReviewActive) ||
-                    (index === 4 && (treasurerReviewActive || paymentConfirmationActive))
+                    (index === 4 && (treasurerReviewActive || paymentConfirmationActive)) ||
+                    (index === 5 && mayorReviewActive)
                       ? styles.activeReviewCard
                       : ""
                   }
@@ -1349,6 +1484,15 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                       }}
                       onAction={requestPaymentAction}
                       onReverse={requestPaymentReversal}
+                    />
+                  ) : null}
+                  {index === 5 && mayorReviewActive ? (
+                    <MayorReviewActions
+                      fields={mayorFields}
+                      applicationType={record.type}
+                      error={mayorError}
+                      onFieldChange={updateMayorField}
+                      onAction={requestMayorDecision}
                     />
                   ) : null}
                 </article>
@@ -1685,6 +1829,37 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         destructive={pendingPaymentAction === "reject"}
         onConfirm={() => {
           if (pendingPaymentAction) commitPaymentAction(pendingPaymentAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingMayorAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingMayorAction(null);
+        }}
+        title={
+          pendingMayorAction === "approve"
+            ? `Approve ${record.type === "Closure" ? "closure" : "permit"} decision?`
+            : pendingMayorAction === "return"
+              ? "Return application to a processing office?"
+              : "Defer the Mayor’s final decision?"
+        }
+        description={
+          pendingMayorAction === "approve"
+            ? `This records ${mayorFields.decisionReference} as the final approval and routes the case to ${record.type === "Closure" ? "closure certificate" : "permit"} generation. No document number is issued at this stage.`
+            : pendingMayorAction === "return"
+              ? `This returns the case to ${mayorFields.returnDestination} with the recorded instructions.`
+              : "This keeps the application assigned to the Mayor’s Office and records the deferral reason in the audit trail."
+        }
+        confirmLabel={
+          pendingMayorAction === "approve"
+            ? "Approve and route"
+            : pendingMayorAction === "return"
+              ? "Return to office"
+              : "Defer decision"
+        }
+        destructive={pendingMayorAction === "return"}
+        onConfirm={() => {
+          if (pendingMayorAction) commitMayorDecision(pendingMayorAction);
         }}
       />
       <ConfirmationDialog

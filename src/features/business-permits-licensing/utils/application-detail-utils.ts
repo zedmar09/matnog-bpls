@@ -14,6 +14,9 @@ import type {
   HealthDecisionResult,
   HealthReviewAction,
   HealthReviewOverride,
+  MayorDecisionResult,
+  MayorReviewAction,
+  MayorReviewOverride,
   PaymentConfirmationAction,
   PaymentConfirmationOverride,
   PaymentConfirmationResult,
@@ -75,6 +78,15 @@ export const TREASURER_ASSESSMENT_ACTOR = "Rogelio M. Funes";
 export const DEFAULT_ASSESSMENT_RULE = "Matnog Revenue Code 2025 · Configured sample";
 export const PAYMENT_CONFIRMATION_STORAGE_KEY = "matnog-bpls-payment-confirmation-overrides-v1";
 export const PAYMENT_CONFIRMATION_ACTOR = "Rogelio M. Funes";
+export const MAYOR_REVIEW_STORAGE_KEY = "matnog-bpls-mayor-review-overrides-v1";
+export const MAYOR_REVIEW_ACTOR = "Roberto P. Hababag";
+export const MAYOR_RETURN_DESTINATIONS = [
+  "BPLO completeness review",
+  "Zoning and locational review",
+  "Health and sanitary review",
+  "Fire safety review",
+  "Treasurer assessment",
+] as const;
 export const PAYMENT_CHANNELS = [
   "Municipal Treasurer cash / counter",
   "GCash",
@@ -181,6 +193,7 @@ export function createOfficeReviews(
   healthOverride?: HealthReviewOverride,
   fireOverride?: FireReviewOverride,
   treasurerOverride?: TreasurerAssessmentOverride,
+  mayorOverride?: MayorReviewOverride,
 ): ApplicationOfficeReview[] {
   let statuses: ApplicationReviewStatus[] = reviewStatuses(record);
   if (override?.status === "Approved")
@@ -225,6 +238,7 @@ export function createOfficeReviews(
       nextStatus,
     ];
   }
+  if (mayorOverride) statuses[5] = mayorOverride.status;
   const seed = sequence(record);
   return REVIEW_OFFICES.map(([office, assignee], index) => {
     const officeOverride =
@@ -238,7 +252,7 @@ export function createOfficeReviews(
               ? fireOverride
               : index === 4
                 ? treasurerOverride
-                : undefined;
+                : mayorOverride;
     const status = officeOverride?.status ?? statuses[index];
     return {
       id: `REV-${record.id.slice(-5)}-${index + 1}`,
@@ -316,7 +330,11 @@ export function createProcessingGates(
           : "Pending",
       detail: ["Issued", "Closed"].includes(record.status)
         ? "Final municipal decision recorded"
-        : "Final approval remains unavailable",
+        : record.status === "Ready to issue"
+          ? record.type === "Closure"
+            ? "Final approval complete; closure certificate generation is in progress"
+            : "Final approval complete; permit generation is in progress"
+          : "Final approval remains unavailable",
     },
   ];
 }
@@ -329,6 +347,7 @@ export function createApplicationTimeline(
   fireOverride?: FireReviewOverride,
   treasurerOverride?: TreasurerAssessmentOverride,
   paymentOverride?: PaymentConfirmationOverride,
+  mayorOverride?: MayorReviewOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -379,6 +398,7 @@ export function createApplicationTimeline(
       ...(fireOverride?.events ?? []),
       ...(treasurerOverride?.events ?? []),
       ...(paymentOverride?.events ?? []),
+      ...(mayorOverride?.events ?? []),
     ];
   }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
@@ -400,6 +420,7 @@ export function createApplicationTimeline(
     ...(fireOverride?.events ?? []),
     ...(treasurerOverride?.events ?? []),
     ...(paymentOverride?.events ?? []),
+    ...(mayorOverride?.events ?? []),
   ];
 }
 
@@ -1199,4 +1220,158 @@ export function mergePaymentConfirmationOverrides(
   next: PaymentConfirmationOverride,
 ) {
   return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+export type MayorReviewFields = Pick<
+  MayorReviewOverride,
+  | "decisionReference"
+  | "decisionDate"
+  | "effectiveFrom"
+  | "effectiveUntil"
+  | "permitClassification"
+  | "returnDestination"
+  | "conditions"
+  | "remarks"
+>;
+
+export function createDefaultMayorFields(record: ApplicationDirectoryRecord): MayorReviewFields {
+  return {
+    decisionReference: `MAY-${record.fiscalPeriod}-${record.id.slice(-5)}`,
+    decisionDate: "2026-09-23",
+    effectiveFrom: "2026-09-23",
+    effectiveUntil: record.type === "Closure" ? "" : `${record.fiscalPeriod}-12-31`,
+    permitClassification: record.type === "Closure" ? "Closure certificate" : `${record.type} business permit`,
+    returnDestination: "BPLO completeness review",
+    conditions: "Subject to continued compliance with applicable municipal and national regulations.",
+    remarks: "",
+  };
+}
+
+export function validateMayorDecision(
+  action: MayorReviewAction,
+  fields: MayorReviewFields,
+  applicationType: ApplicationDirectoryRecord["type"],
+) {
+  if (action === "return") {
+    if (!fields.returnDestination.trim()) return "Select the office that must address the returned application.";
+    if (fields.remarks.trim().length < 10) return "Enter a return reason of at least 10 characters.";
+    return "";
+  }
+  if (action === "defer")
+    return fields.remarks.trim().length >= 10 ? "" : "Enter a deferral reason of at least 10 characters.";
+  if (!fields.decisionReference.trim()) return "Enter the Mayor decision reference.";
+  if (!fields.decisionDate) return "Enter the decision date.";
+  if (fields.decisionDate > "2026-09-23") return "The decision date cannot be in the future.";
+  if (!fields.effectiveFrom) return "Enter the effectivity date.";
+  if (applicationType !== "Closure" && !fields.effectiveUntil) return "Enter the permit validity end date.";
+  if (fields.effectiveUntil && fields.effectiveUntil < fields.effectiveFrom)
+    return "The validity end date cannot be before the effectivity date.";
+  if (!fields.permitClassification.trim()) return "Select the permit or certificate classification.";
+  return "";
+}
+
+const MAYOR_RETURN_ASSIGNEES: Record<string, string> = {
+  "BPLO completeness review": BPLO_REVIEW_ACTOR,
+  "Zoning and locational review": ZONING_REVIEW_ACTOR,
+  "Health and sanitary review": HEALTH_REVIEW_ACTOR,
+  "Fire safety review": FIRE_REVIEW_ACTOR,
+  "Treasurer assessment": TREASURER_ASSESSMENT_ACTOR,
+};
+
+export function applyMayorDecision(
+  record: ApplicationDirectoryRecord,
+  current: MayorReviewOverride | undefined,
+  action: MayorReviewAction,
+  fields: MayorReviewFields,
+  occurredAt = "2026-09-23 21:00",
+): MayorDecisionResult {
+  const status: ApplicationReviewStatus =
+    action === "approve" ? "Approved" : action === "return" ? "For correction" : "In review";
+  const documentName = record.type === "Closure" ? "closure certificate" : "business permit";
+  const labels: Record<MayorReviewAction, string> = {
+    approve: "Mayor final approval recorded",
+    return: "Mayor review returned to processing office",
+    defer: "Mayor decision deferred",
+  };
+  const detail =
+    action === "approve"
+      ? `${fields.decisionReference.trim()} approved; ${documentName} queued for controlled generation and issuance.`
+      : action === "return"
+        ? `Returned to ${fields.returnDestination}: ${fields.remarks.trim()}`
+        : `Final decision deferred: ${fields.remarks.trim()}`;
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-MAYOR-${(current?.events.length ?? 0) + 1}`,
+    action: labels[action],
+    detail,
+    actor: MAYOR_REVIEW_ACTOR,
+    office: "Office of the Municipal Mayor",
+    occurredAt,
+  };
+  const override: MayorReviewOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    status,
+    ...fields,
+    decisionReference: fields.decisionReference.trim(),
+    permitClassification: fields.permitClassification.trim(),
+    returnDestination: fields.returnDestination.trim(),
+    conditions: fields.conditions.trim(),
+    remarks:
+      fields.remarks.trim() ||
+      (action === "approve" ? `Approved for ${documentName} generation with no unresolved final findings.` : ""),
+    actor: MAYOR_REVIEW_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const updatedRecord: ApplicationDirectoryRecord =
+    action === "approve"
+      ? {
+          ...record,
+          status: "Ready to issue",
+          currentStage: record.type === "Closure" ? "Closure certificate generation" : "Permit generation",
+          assignedOfficer: BPLO_REVIEW_ACTOR,
+          updatedAt: occurredAt,
+        }
+      : action === "return"
+        ? {
+            ...record,
+            status: "Under review",
+            currentStage: fields.returnDestination,
+            assignedOfficer: MAYOR_RETURN_ASSIGNEES[fields.returnDestination] ?? BPLO_REVIEW_ACTOR,
+            updatedAt: occurredAt,
+          }
+        : {
+            ...record,
+            status: "Under review",
+            currentStage: "Mayor's final approval",
+            assignedOfficer: MAYOR_REVIEW_ACTOR,
+            updatedAt: occurredAt,
+          };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergeMayorReviewOverrides(overrides: readonly MayorReviewOverride[], next: MayorReviewOverride) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+export function invalidateMayorApprovalForPaymentReversal(
+  record: ApplicationDirectoryRecord,
+  current: MayorReviewOverride,
+  occurredAt = "2026-09-23 20:30",
+): MayorReviewOverride {
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-MAYOR-${current.events.length + 1}`,
+    action: "Mayor approval invalidated",
+    detail: "A confirmed payment was reversed. A fresh final decision is required after the balance is settled.",
+    actor: "System",
+    office: "Matnog BPLS",
+    occurredAt,
+  };
+  return {
+    ...current,
+    status: "Not started",
+    remarks: "Prior final approval invalidated by a payment reversal.",
+    updatedAt: occurredAt,
+    events: [...current.events, event],
+  };
 }

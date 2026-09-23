@@ -3,6 +3,7 @@ import {
   applyBploDecision,
   applyFireDecision,
   applyHealthDecision,
+  applyMayorDecision,
   applyPaymentConfirmation,
   applyPaymentReversal,
   applyTreasurerAssessment,
@@ -12,13 +13,16 @@ import {
   createApplicationRequirements,
   createApplicationTimeline,
   createDefaultAssessmentFields,
+  createDefaultMayorFields,
   createDefaultPaymentFields,
   createOfficeReviews,
   createProcessingGates,
+  invalidateMayorApprovalForPaymentReversal,
   resolveApplicationRecord,
   validateBploDecision,
   validateFireDecision,
   validateHealthDecision,
+  validateMayorDecision,
   validatePaymentConfirmation,
   validatePaymentReversal,
   validateTreasurerAssessment,
@@ -365,4 +369,70 @@ test("Payment reversal restores the balance and locks Mayor approval", () => {
   assert.equal(reversed.record.paymentStatus, "Reversed");
   assert.equal(reversed.record.currentStage, "Payment confirmation");
   assert.equal(reversed.override.transactions[0].status, "Reversed");
+});
+
+test("Mayor approval routes permits to controlled document generation", () => {
+  const paid = { ...payableRecord, paymentStatus: "Paid" as const, currentStage: "Mayor's final approval" };
+  const fields = createDefaultMayorFields({ ...paid, type: "Renewal" });
+  const result = applyMayorDecision({ ...paid, type: "Renewal" }, undefined, "approve", fields);
+  assert.equal(result.record.status, "Ready to issue");
+  assert.equal(result.record.currentStage, "Permit generation");
+  assert.equal(result.record.permitNumber, paid.permitNumber);
+  assert.equal(result.override.status, "Approved");
+  const reviews = createOfficeReviews(
+    result.record,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    result.override,
+  );
+  assert.match(
+    createProcessingGates(result.record, createApplicationRequirements(result.record), reviews)[4].detail,
+    /permit generation/,
+  );
+});
+
+test("Mayor approval routes closure applications to certificate generation", () => {
+  const paidClosure = { ...payableRecord, type: "Closure" as const, paymentStatus: "Paid" as const };
+  const result = applyMayorDecision(paidClosure, undefined, "approve", createDefaultMayorFields(paidClosure));
+  assert.equal(result.record.status, "Ready to issue");
+  assert.equal(result.record.currentStage, "Closure certificate generation");
+});
+
+test("Mayor return and deferral require operational reasons", () => {
+  const fields = createDefaultMayorFields(payableRecord);
+  assert.ok(validateMayorDecision("return", { ...fields, remarks: "Short" }, payableRecord.type));
+  assert.ok(validateMayorDecision("defer", { ...fields, remarks: "Short" }, payableRecord.type));
+  assert.equal(
+    validateMayorDecision(
+      "return",
+      { ...fields, remarks: "Treasurer must reconcile the final assessment." },
+      payableRecord.type,
+    ),
+    "",
+  );
+});
+
+test("Mayor return assigns the selected processing office", () => {
+  const fields = {
+    ...createDefaultMayorFields(payableRecord),
+    returnDestination: "Treasurer assessment",
+    remarks: "Reconcile the assessment basis before final approval.",
+  };
+  const result = applyMayorDecision(payableRecord, undefined, "return", fields);
+  assert.equal(result.record.status, "Under review");
+  assert.equal(result.record.currentStage, "Treasurer assessment");
+  assert.equal(result.record.assignedOfficer, "Rogelio M. Funes");
+});
+
+test("Payment reversal invalidates an existing Mayor approval without erasing its audit history", () => {
+  const paid = { ...payableRecord, paymentStatus: "Paid" as const, currentStage: "Mayor's final approval" };
+  const approved = applyMayorDecision(paid, undefined, "approve", createDefaultMayorFields(paid));
+  const invalidated = invalidateMayorApprovalForPaymentReversal(approved.record, approved.override);
+  assert.equal(invalidated.status, "Not started");
+  assert.equal(invalidated.events.length, 2);
+  assert.equal(invalidated.events[0].action, "Mayor final approval recorded");
+  assert.equal(invalidated.events[1].action, "Mayor approval invalidated");
 });

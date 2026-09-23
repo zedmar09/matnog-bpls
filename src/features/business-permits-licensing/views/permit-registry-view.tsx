@@ -97,7 +97,8 @@ function RecordActions({ record }: { record: PermitRegistryRecord }) {
   );
 }
 
-export function PermitRegistryView() {
+export function PermitRegistryView({ mode = "registry" }: { mode?: "registry" | "issued" }) {
+  const issuedMode = mode === "issued";
   const [records, setRecords] = useState<PermitRegistryRecord[]>(() => [...MATNOG_PERMIT_REGISTRY]);
   const [filters, setFilters] = useState<PermitRegistryFilters>(EMPTY_PERMIT_REGISTRY_FILTERS);
   const [sortKey, setSortKey] = useState<PermitRegistrySortKey>("lastUpdated");
@@ -156,14 +157,27 @@ export function PermitRegistryView() {
 
   return (
     <main className={styles.page}>
+      {issuedMode ? (
+        <nav className={styles.breadcrumb} aria-label="Breadcrumb">
+          <Link href="/permits">Permits</Link>
+          <span>/</span>
+          <span>Issued permits</span>
+        </nav>
+      ) : null}
       <header className={styles.pageHeader}>
         <div>
-          <p className={styles.eyebrow}>Permit Issuance &amp; Verification</p>
-          <h1>Permit Registry</h1>
-          <p>Search issued business permits and closure certificates with release and QR verification status.</p>
+          <p className={styles.eyebrow}>
+            {issuedMode ? "Official controlled-document register" : "Permit Issuance & Verification"}
+          </p>
+          <h1>{issuedMode ? "Issued Permits & Certificates" : "Permit Registry"}</h1>
+          <p>
+            {issuedMode
+              ? "Track released business permits and closure certificates, validity, restrictions, and public QR status."
+              : "Search issued business permits and closure certificates with release and QR verification status."}
+          </p>
         </div>
-        <Link className={styles.headerAction} href="/applications">
-          <FileSearch size={15} /> View applications
+        <Link className={styles.headerAction} href={issuedMode ? "/permits/release" : "/applications"}>
+          <FileSearch size={15} /> {issuedMode ? "Open release queue" : "View applications"}
         </Link>
       </header>
 

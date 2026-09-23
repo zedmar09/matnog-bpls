@@ -7,11 +7,27 @@
 }
 
 .pageHeader,
+.breadcrumb,
 .summaryGrid,
 .registryCard {
   width: 100%;
   max-width: 1600px;
   margin-inline: auto;
+}
+
+.breadcrumb {
+  margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #8a90a0;
+  font-size: 9px;
+}
+
+.breadcrumb a {
+  color: #6540c7;
+  font-weight: 600;
+  text-decoration: none;
 }
 
 .pageHeader {

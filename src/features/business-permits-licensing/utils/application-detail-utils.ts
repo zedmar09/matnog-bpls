@@ -14,6 +14,10 @@ import type {
   HealthDecisionResult,
   HealthReviewAction,
   HealthReviewOverride,
+  PaymentConfirmationAction,
+  PaymentConfirmationOverride,
+  PaymentConfirmationResult,
+  PaymentTransaction,
   TreasurerAssessmentAction,
   TreasurerAssessmentOverride,
   TreasurerAssessmentResult,
@@ -69,6 +73,15 @@ export const FIRE_SAFETY_CONTROLS = [
 export const TREASURER_ASSESSMENT_STORAGE_KEY = "matnog-bpls-treasurer-assessment-overrides-v1";
 export const TREASURER_ASSESSMENT_ACTOR = "Rogelio M. Funes";
 export const DEFAULT_ASSESSMENT_RULE = "Matnog Revenue Code 2025 · Configured sample";
+export const PAYMENT_CONFIRMATION_STORAGE_KEY = "matnog-bpls-payment-confirmation-overrides-v1";
+export const PAYMENT_CONFIRMATION_ACTOR = "Rogelio M. Funes";
+export const PAYMENT_CHANNELS = [
+  "Municipal Treasurer cash / counter",
+  "GCash",
+  "Maya",
+  "LandBank Link.Biz",
+  "Bank e-channel",
+] as const;
 
 function sequence(record: ApplicationDirectoryRecord) {
   const digits = Number(record.id.replace(/\D/g, "").slice(-5));
@@ -315,6 +328,7 @@ export function createApplicationTimeline(
   healthOverride?: HealthReviewOverride,
   fireOverride?: FireReviewOverride,
   treasurerOverride?: TreasurerAssessmentOverride,
+  paymentOverride?: PaymentConfirmationOverride,
 ): ApplicationTimelineEvent[] {
   const seed = sequence(record);
   const events = [
@@ -364,6 +378,7 @@ export function createApplicationTimeline(
       ...(healthOverride?.events ?? []),
       ...(fireOverride?.events ?? []),
       ...(treasurerOverride?.events ?? []),
+      ...(paymentOverride?.events ?? []),
     ];
   }
   const generated = events.slice(0, count).map(([action, detail, actor, office], index) => ({
@@ -384,6 +399,7 @@ export function createApplicationTimeline(
     ...(healthOverride?.events ?? []),
     ...(fireOverride?.events ?? []),
     ...(treasurerOverride?.events ?? []),
+    ...(paymentOverride?.events ?? []),
   ];
 }
 
@@ -970,6 +986,217 @@ export function applyTreasurerAssessment(
 export function mergeTreasurerAssessmentOverrides(
   overrides: readonly TreasurerAssessmentOverride[],
   next: TreasurerAssessmentOverride,
+) {
+  return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
+}
+
+export type PaymentConfirmationFields = Pick<
+  PaymentConfirmationOverride,
+  | "channel"
+  | "payerName"
+  | "paymentDate"
+  | "amount"
+  | "referenceNumber"
+  | "gatewayStatus"
+  | "collectingOfficer"
+  | "notes"
+>;
+
+export function createDefaultPaymentFields(record: ApplicationDirectoryRecord): PaymentConfirmationFields {
+  return {
+    channel: "",
+    payerName: record.ownerName,
+    paymentDate: "2026-09-23",
+    amount: record.assessmentAmount,
+    referenceNumber: "",
+    gatewayStatus: "Pending verification",
+    collectingOfficer: PAYMENT_CONFIRMATION_ACTOR,
+    notes: "",
+  };
+}
+
+export function calculatePaymentSummary(assessmentAmount: number, transactions: readonly PaymentTransaction[]) {
+  const confirmedAmount = transactions.reduce(
+    (sum, transaction) => sum + (transaction.status === "Confirmed" ? transaction.amount : 0),
+    0,
+  );
+  return {
+    confirmedAmount,
+    outstandingBalance: Math.max(0, assessmentAmount - confirmedAmount),
+  };
+}
+
+export function validatePaymentConfirmation(
+  action: PaymentConfirmationAction,
+  fields: PaymentConfirmationFields,
+  assessmentAmount: number,
+  transactions: readonly PaymentTransaction[],
+) {
+  if (action === "save") return fields.notes.trim().length >= 3 ? "" : "Enter a verification note.";
+  if (!fields.channel.trim()) return "Select a payment channel.";
+  if (!fields.payerName.trim()) return "Enter the payer name.";
+  if (!fields.paymentDate) return "Enter the payment date.";
+  if (fields.paymentDate > "2026-09-23") return "The payment date cannot be in the future.";
+  if (fields.amount <= 0) return "Enter a payment amount greater than zero.";
+  if (!fields.referenceNumber.trim()) return "Enter the counter or transaction reference.";
+  if (
+    transactions.some(
+      (transaction) => transaction.referenceNumber.toLowerCase() === fields.referenceNumber.trim().toLowerCase(),
+    )
+  )
+    return "This payment reference is already recorded.";
+  if (!fields.collectingOfficer.trim()) return "Enter the collecting or verifying officer.";
+  if (action === "reject") {
+    if (fields.notes.trim().length < 10) return "Enter a rejection reason of at least 10 characters.";
+    if (!["Failed", "Rejected"].includes(fields.gatewayStatus)) return "Set the gateway status to Failed or Rejected.";
+    return "";
+  }
+  const online = fields.channel !== "Municipal Treasurer cash / counter";
+  if (online && fields.gatewayStatus !== "Successful")
+    return "A successful gateway status is required before confirming an online payment.";
+  const { outstandingBalance } = calculatePaymentSummary(assessmentAmount, transactions);
+  if (fields.amount > outstandingBalance) return "The payment amount cannot exceed the outstanding balance.";
+  return "";
+}
+
+export function validatePaymentReversal(
+  transactionId: string,
+  reason: string,
+  transactions: readonly PaymentTransaction[],
+) {
+  const transaction = transactions.find((item) => item.id === transactionId);
+  if (transaction?.status !== "Confirmed") return "Select a confirmed payment to reverse.";
+  if (reason.trim().length < 10) return "Enter a reversal reason of at least 10 characters.";
+  return "";
+}
+
+export function applyPaymentConfirmation(
+  record: ApplicationDirectoryRecord,
+  assessmentReference: string,
+  current: PaymentConfirmationOverride | undefined,
+  action: PaymentConfirmationAction,
+  fields: PaymentConfirmationFields,
+  occurredAt = "2026-09-23 20:10",
+): PaymentConfirmationResult {
+  const transactionNumber = (current?.transactions.length ?? 0) + 1;
+  const status = action === "confirm" ? "Confirmed" : "Rejected";
+  const transaction: PaymentTransaction | undefined =
+    action === "save"
+      ? undefined
+      : {
+          id: `PAY-${record.id.slice(-5)}-${transactionNumber}`,
+          ...fields,
+          referenceNumber: fields.referenceNumber.trim(),
+          payerName: fields.payerName.trim(),
+          collectingOfficer: fields.collectingOfficer.trim(),
+          officialReceiptNumber:
+            action === "confirm"
+              ? `OR-2026-${record.id.slice(-5)}-${String(
+                  (current?.transactions.filter((item) => item.status === "Confirmed").length ?? 0) + 1,
+                ).padStart(2, "0")}`
+              : "",
+          status,
+          notes: fields.notes.trim(),
+          recordedAt: occurredAt,
+          reversedAt: "",
+          reversalReason: "",
+        };
+  const transactions = transaction ? [...(current?.transactions ?? []), transaction] : (current?.transactions ?? []);
+  const summary = calculatePaymentSummary(record.assessmentAmount, transactions);
+  const paid = action === "confirm" && summary.outstandingBalance === 0;
+  const labels: Record<PaymentConfirmationAction, string> = {
+    save: "Payment verification note saved",
+    confirm: paid ? "Payment completed and confirmed" : "Partial payment confirmed",
+    reject: "Payment transaction rejected",
+  };
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-PAYMENT-${(current?.events.length ?? 0) + 1}`,
+    action: labels[action],
+    detail:
+      action === "save"
+        ? fields.notes.trim()
+        : action === "confirm"
+          ? `${transaction?.officialReceiptNumber} issued for ₱${fields.amount.toLocaleString("en-PH")} via ${fields.channel}. ₱${summary.outstandingBalance.toLocaleString("en-PH")} remains outstanding.`
+          : `${fields.referenceNumber.trim()} rejected: ${fields.notes.trim()}`,
+    actor: PAYMENT_CONFIRMATION_ACTOR,
+    office: "Municipal Treasurer's Office",
+    occurredAt,
+  };
+  const resetFields = createDefaultPaymentFields({
+    ...record,
+    assessmentAmount: summary.outstandingBalance,
+  });
+  const override: PaymentConfirmationOverride = {
+    applicationId: record.id,
+    sourceStatus: current?.sourceStatus ?? record.status,
+    assessmentReference,
+    assessmentAmount: record.assessmentAmount,
+    ...(action === "save" ? fields : resetFields),
+    amount: action === "save" ? fields.amount : summary.outstandingBalance,
+    transactions,
+    actor: PAYMENT_CONFIRMATION_ACTOR,
+    updatedAt: occurredAt,
+    events: [...(current?.events ?? []), event],
+  };
+  const updatedRecord: ApplicationDirectoryRecord =
+    action === "confirm"
+      ? {
+          ...record,
+          status: "Under review",
+          currentStage: paid ? "Mayor's final approval" : "Payment confirmation",
+          assignedOfficer: paid ? "Roberto P. Hababag" : PAYMENT_CONFIRMATION_ACTOR,
+          paymentStatus: paid ? "Paid" : "Pending payment",
+          updatedAt: occurredAt,
+        }
+      : { ...record, updatedAt: occurredAt };
+  return { record: updatedRecord, override, event };
+}
+
+export function applyPaymentReversal(
+  record: ApplicationDirectoryRecord,
+  current: PaymentConfirmationOverride,
+  transactionId: string,
+  reason: string,
+  occurredAt = "2026-09-23 20:30",
+): PaymentConfirmationResult {
+  const target = current.transactions.find((item) => item.id === transactionId);
+  if (!target) throw new Error("Payment transaction not found.");
+  const transactions = current.transactions.map((item) =>
+    item.id === transactionId
+      ? { ...item, status: "Reversed" as const, reversedAt: occurredAt, reversalReason: reason.trim() }
+      : item,
+  );
+  const summary = calculatePaymentSummary(record.assessmentAmount, transactions);
+  const event: ApplicationTimelineEvent = {
+    id: `EVT-${record.id.slice(-5)}-PAYMENT-${current.events.length + 1}`,
+    action: "Payment transaction reversed",
+    detail: `${target.officialReceiptNumber} reversed: ${reason.trim()}`,
+    actor: PAYMENT_CONFIRMATION_ACTOR,
+    office: "Municipal Treasurer's Office",
+    occurredAt,
+  };
+  const paid = summary.outstandingBalance === 0;
+  const override: PaymentConfirmationOverride = {
+    ...current,
+    amount: summary.outstandingBalance,
+    transactions,
+    updatedAt: occurredAt,
+    events: [...current.events, event],
+  };
+  const updatedRecord: ApplicationDirectoryRecord = {
+    ...record,
+    status: "Under review",
+    currentStage: paid ? "Mayor's final approval" : "Payment confirmation",
+    assignedOfficer: paid ? "Roberto P. Hababag" : PAYMENT_CONFIRMATION_ACTOR,
+    paymentStatus: paid ? "Paid" : "Reversed",
+    updatedAt: occurredAt,
+  };
+  return { record: updatedRecord, override, event };
+}
+
+export function mergePaymentConfirmationOverrides(
+  overrides: readonly PaymentConfirmationOverride[],
+  next: PaymentConfirmationOverride,
 ) {
   return [next, ...overrides.filter((item) => item.applicationId !== next.applicationId)];
 }

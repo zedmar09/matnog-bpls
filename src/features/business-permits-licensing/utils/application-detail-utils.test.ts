@@ -3,18 +3,24 @@ import {
   applyBploDecision,
   applyFireDecision,
   applyHealthDecision,
+  applyPaymentConfirmation,
+  applyPaymentReversal,
   applyTreasurerAssessment,
   applyZoningDecision,
   calculateAssessmentTotals,
+  calculatePaymentSummary,
   createApplicationRequirements,
   createApplicationTimeline,
   createDefaultAssessmentFields,
+  createDefaultPaymentFields,
   createOfficeReviews,
   createProcessingGates,
   resolveApplicationRecord,
   validateBploDecision,
   validateFireDecision,
   validateHealthDecision,
+  validatePaymentConfirmation,
+  validatePaymentReversal,
   validateTreasurerAssessment,
   validateZoningDecision,
 } from "./application-detail-utils";
@@ -256,4 +262,107 @@ test("Treasurer correction return requires a reason and selected requirement", (
     ]),
     "",
   );
+});
+
+const payableRecord = {
+  ...MATNOG_APPLICATION_DIRECTORY[0],
+  assessmentAmount: 13_600,
+  paymentStatus: "Pending payment" as const,
+  currentStage: "Payment confirmation",
+};
+
+const completePaymentFields = {
+  ...createDefaultPaymentFields(payableRecord),
+  channel: "GCash",
+  amount: 5_000,
+  referenceNumber: "GCASH-2026-00318-01",
+  gatewayStatus: "Successful",
+  notes: "Gateway reference matched the posted settlement report.",
+};
+
+test("Partial payment reduces the balance without opening Mayor approval", () => {
+  const result = applyPaymentConfirmation(payableRecord, "ASM-2026-00318", undefined, "confirm", completePaymentFields);
+  assert.equal(result.record.paymentStatus, "Pending payment");
+  assert.equal(result.record.currentStage, "Payment confirmation");
+  assert.equal(
+    calculatePaymentSummary(payableRecord.assessmentAmount, result.override.transactions).outstandingBalance,
+    8_600,
+  );
+  assert.match(result.override.transactions[0].officialReceiptNumber, /^OR-2026-/);
+});
+
+test("Full payment routes the application to Mayor approval", () => {
+  const result = applyPaymentConfirmation(payableRecord, "ASM-2026-00318", undefined, "confirm", {
+    ...completePaymentFields,
+    amount: payableRecord.assessmentAmount,
+  });
+  assert.equal(result.record.paymentStatus, "Paid");
+  assert.equal(result.record.currentStage, "Mayor's final approval");
+  assert.equal(result.record.assignedOfficer, "Roberto P. Hababag");
+});
+
+test("Payment validation blocks unverified gateways, overpayments, and duplicate references", () => {
+  assert.ok(
+    validatePaymentConfirmation(
+      "confirm",
+      { ...completePaymentFields, gatewayStatus: "Pending verification" },
+      payableRecord.assessmentAmount,
+      [],
+    ),
+  );
+  assert.ok(
+    validatePaymentConfirmation(
+      "confirm",
+      { ...completePaymentFields, amount: 20_000 },
+      payableRecord.assessmentAmount,
+      [],
+    ),
+  );
+  const first = applyPaymentConfirmation(payableRecord, "ASM-2026-00318", undefined, "confirm", completePaymentFields);
+  assert.ok(
+    validatePaymentConfirmation(
+      "confirm",
+      completePaymentFields,
+      payableRecord.assessmentAmount,
+      first.override.transactions,
+    ),
+  );
+});
+
+test("Rejected payments remain in the ledger without reducing the balance", () => {
+  const result = applyPaymentConfirmation(payableRecord, "ASM-2026-00318", undefined, "reject", {
+    ...completePaymentFields,
+    gatewayStatus: "Failed",
+    notes: "Gateway settlement could not verify this reference.",
+  });
+  assert.equal(result.override.transactions[0].status, "Rejected");
+  assert.equal(
+    calculatePaymentSummary(payableRecord.assessmentAmount, result.override.transactions).outstandingBalance,
+    13_600,
+  );
+});
+
+test("Payment reversal restores the balance and locks Mayor approval", () => {
+  const paid = applyPaymentConfirmation(payableRecord, "ASM-2026-00318", undefined, "confirm", {
+    ...completePaymentFields,
+    amount: payableRecord.assessmentAmount,
+  });
+  const transactionId = paid.override.transactions[0].id;
+  assert.equal(
+    validatePaymentReversal(
+      transactionId,
+      "Duplicate settlement confirmed during reconciliation.",
+      paid.override.transactions,
+    ),
+    "",
+  );
+  const reversed = applyPaymentReversal(
+    paid.record,
+    paid.override,
+    transactionId,
+    "Duplicate settlement confirmed during reconciliation.",
+  );
+  assert.equal(reversed.record.paymentStatus, "Reversed");
+  assert.equal(reversed.record.currentStage, "Payment confirmation");
+  assert.equal(reversed.override.transactions[0].status, "Reversed");
 });

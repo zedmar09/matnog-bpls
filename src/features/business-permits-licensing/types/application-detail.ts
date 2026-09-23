@@ -6,6 +6,8 @@ export type ZoningReviewAction = "approve" | "return" | "not-applicable" | "note
 export type HealthReviewAction = "approve" | "return" | "not-applicable" | "note";
 export type FireReviewAction = "approve" | "return" | "not-applicable" | "note";
 export type TreasurerAssessmentAction = "save" | "return" | "post";
+export type PaymentConfirmationAction = "save" | "confirm" | "reject";
+export type PaymentTransactionStatus = "Confirmed" | "Rejected" | "Reversed";
 
 export type AssessmentFeeItem = {
   id: string;
@@ -162,5 +164,47 @@ export type TreasurerAssessmentOverride = {
 export type TreasurerAssessmentResult = {
   record: import("./application-directory").ApplicationDirectoryRecord;
   override: TreasurerAssessmentOverride;
+  event: ApplicationTimelineEvent;
+};
+
+export type PaymentTransaction = {
+  id: string;
+  channel: string;
+  payerName: string;
+  paymentDate: string;
+  amount: number;
+  referenceNumber: string;
+  gatewayStatus: string;
+  collectingOfficer: string;
+  officialReceiptNumber: string;
+  status: PaymentTransactionStatus;
+  notes: string;
+  recordedAt: string;
+  reversedAt: string;
+  reversalReason: string;
+};
+
+export type PaymentConfirmationOverride = {
+  applicationId: string;
+  sourceStatus: import("./application-directory").ApplicationDirectoryStatus;
+  assessmentReference: string;
+  assessmentAmount: number;
+  channel: string;
+  payerName: string;
+  paymentDate: string;
+  amount: number;
+  referenceNumber: string;
+  gatewayStatus: string;
+  collectingOfficer: string;
+  notes: string;
+  transactions: PaymentTransaction[];
+  actor: string;
+  updatedAt: string;
+  events: ApplicationTimelineEvent[];
+};
+
+export type PaymentConfirmationResult = {
+  record: import("./application-directory").ApplicationDirectoryRecord;
+  override: PaymentConfirmationOverride;
   event: ApplicationTimelineEvent;
 };

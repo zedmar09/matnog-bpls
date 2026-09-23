@@ -16,6 +16,7 @@ import {
   CircleDot,
   ClipboardCheck,
   Clock3,
+  CreditCard,
   FileCheck2,
   FileQuestion,
   FileText,
@@ -35,6 +36,7 @@ import { ConfirmationDialog } from "@/shared/components/confirmation-dialog";
 import styles from "../components/application-detail.module.css";
 import { FireReviewActions, type FireReviewFields } from "../components/fire-review-actions";
 import { HealthReviewActions, type HealthReviewFields } from "../components/health-review-actions";
+import { PaymentConfirmationActions } from "../components/payment-confirmation-actions";
 import { TreasurerAssessmentActions } from "../components/treasurer-assessment-actions";
 import { MATNOG_APPLICATION_DIRECTORY } from "../data/matnog-application-directory";
 import { MATNOG_BUSINESS_DIRECTORY } from "../data/matnog-business-directory";
@@ -46,6 +48,8 @@ import type {
   FireReviewOverride,
   HealthReviewAction,
   HealthReviewOverride,
+  PaymentConfirmationAction,
+  PaymentConfirmationOverride,
   TreasurerAssessmentAction,
   TreasurerAssessmentOverride,
   ZoningReviewAction,
@@ -56,15 +60,19 @@ import {
   applyBploDecision,
   applyFireDecision,
   applyHealthDecision,
+  applyPaymentConfirmation,
+  applyPaymentReversal,
   applyTreasurerAssessment,
   applyZoningDecision,
   BPLO_REVIEW_ACTOR,
   BPLO_REVIEW_STORAGE_KEY,
   calculateAssessmentFeeItems,
   calculateAssessmentTotals,
+  calculatePaymentSummary,
   createApplicationRequirements,
   createApplicationTimeline,
   createDefaultAssessmentFields,
+  createDefaultPaymentFields,
   createOfficeReviews,
   createProcessingGates,
   FIRE_REVIEW_ACTOR,
@@ -74,8 +82,12 @@ import {
   mergeBploReviewOverrides,
   mergeFireReviewOverrides,
   mergeHealthReviewOverrides,
+  mergePaymentConfirmationOverrides,
   mergeTreasurerAssessmentOverrides,
   mergeZoningReviewOverrides,
+  PAYMENT_CONFIRMATION_ACTOR,
+  PAYMENT_CONFIRMATION_STORAGE_KEY,
+  type PaymentConfirmationFields,
   resolveApplicationRecord,
   TREASURER_ASSESSMENT_ACTOR,
   TREASURER_ASSESSMENT_STORAGE_KEY,
@@ -83,6 +95,8 @@ import {
   validateBploDecision,
   validateFireDecision,
   validateHealthDecision,
+  validatePaymentConfirmation,
+  validatePaymentReversal,
   validateTreasurerAssessment,
   validateZoningDecision,
   ZONING_REVIEW_ACTOR,
@@ -141,6 +155,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
   const [healthOverride, setHealthOverride] = useState<HealthReviewOverride>();
   const [fireOverride, setFireOverride] = useState<FireReviewOverride>();
   const [treasurerOverride, setTreasurerOverride] = useState<TreasurerAssessmentOverride>();
+  const [paymentOverride, setPaymentOverride] = useState<PaymentConfirmationOverride>();
   const [remarks, setRemarks] = useState("");
   const [affectedRequirementIds, setAffectedRequirementIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -189,6 +204,15 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     TreasurerAssessmentAction,
     "save"
   > | null>(null);
+  const [paymentFields, setPaymentFields] = useState<PaymentConfirmationFields>(() =>
+    createDefaultPaymentFields(seededRecord ?? MATNOG_APPLICATION_DIRECTORY[0]),
+  );
+  const [paymentError, setPaymentError] = useState("");
+  const [reversalReason, setReversalReason] = useState("");
+  const [pendingPaymentAction, setPendingPaymentAction] = useState<Exclude<PaymentConfirmationAction, "save"> | null>(
+    null,
+  );
+  const [pendingReversalTransactionId, setPendingReversalTransactionId] = useState("");
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -196,7 +220,8 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
       const savedApplications = JSON.parse(
         window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]",
       ) as ApplicationDirectoryRecord[];
-      setRecord(resolveApplicationRecord(MATNOG_APPLICATION_DIRECTORY, savedApplications, applicationId));
+      const resolvedRecord = resolveApplicationRecord(MATNOG_APPLICATION_DIRECTORY, savedApplications, applicationId);
+      setRecord(resolvedRecord);
       const reviewOverrides = JSON.parse(
         window.localStorage.getItem(BPLO_REVIEW_STORAGE_KEY) ?? "[]",
       ) as BploReviewOverride[];
@@ -280,6 +305,27 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         });
         setTreasurerAffectedRequirementIds(currentTreasurerOverride.affectedRequirementIds);
       }
+      const paymentOverrides = JSON.parse(
+        window.localStorage.getItem(PAYMENT_CONFIRMATION_STORAGE_KEY) ?? "[]",
+      ) as PaymentConfirmationOverride[];
+      const currentPaymentOverride = paymentOverrides.find(
+        (item) => item.applicationId === applicationId.toUpperCase(),
+      );
+      setPaymentOverride(currentPaymentOverride);
+      if (currentPaymentOverride) {
+        setPaymentFields({
+          channel: currentPaymentOverride.channel,
+          payerName: currentPaymentOverride.payerName,
+          paymentDate: currentPaymentOverride.paymentDate,
+          amount: currentPaymentOverride.amount,
+          referenceNumber: currentPaymentOverride.referenceNumber,
+          gatewayStatus: currentPaymentOverride.gatewayStatus,
+          collectingOfficer: currentPaymentOverride.collectingOfficer,
+          notes: currentPaymentOverride.notes,
+        });
+      } else if (resolvedRecord) {
+        setPaymentFields(createDefaultPaymentFields(resolvedRecord));
+      }
       const savedBusinesses = JSON.parse(window.localStorage.getItem(REGISTERED_BUSINESSES_STORAGE_KEY) ?? "[]");
       setBusinesses(mergeBusinessRecords(MATNOG_BUSINESS_DIRECTORY, savedBusinesses));
     } catch {
@@ -325,11 +371,16 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             healthOverride,
             fireOverride,
             treasurerOverride,
+            paymentOverride,
           )
         : [],
-    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride],
+    [record, bploOverride, zoningOverride, healthOverride, fireOverride, treasurerOverride, paymentOverride],
   );
   const assessmentTotals = useMemo(() => calculateAssessmentTotals(treasurerFields), [treasurerFields]);
+  const paymentSummary = useMemo(
+    () => calculatePaymentSummary(record?.assessmentAmount ?? 0, paymentOverride?.transactions ?? []),
+    [record?.assessmentAmount, paymentOverride?.transactions],
+  );
 
   function requestDecision(action: BploReviewAction) {
     const error = validateBploDecision(action, remarks, affectedRequirementIds);
@@ -678,6 +729,106 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     );
   }
 
+  function updatePaymentField<K extends keyof PaymentConfirmationFields>(
+    field: K,
+    value: PaymentConfirmationFields[K],
+  ) {
+    setPaymentFields((current) => ({ ...current, [field]: value }));
+    setPaymentError("");
+  }
+
+  function requestPaymentAction(action: PaymentConfirmationAction) {
+    if (!record) return;
+    const error = validatePaymentConfirmation(
+      action,
+      paymentFields,
+      record.assessmentAmount,
+      paymentOverride?.transactions ?? [],
+    );
+    if (error) {
+      setPaymentError(error);
+      return;
+    }
+    setPaymentError("");
+    if (action === "save") commitPaymentAction(action);
+    else setPendingPaymentAction(action);
+  }
+
+  function persistPaymentResult(result: ReturnType<typeof applyPaymentConfirmation>) {
+    let savedApplications: ApplicationDirectoryRecord[] = [];
+    let paymentOverrides: PaymentConfirmationOverride[] = [];
+    try {
+      savedApplications = JSON.parse(window.localStorage.getItem(SAVED_APPLICATIONS_STORAGE_KEY) ?? "[]");
+      paymentOverrides = JSON.parse(window.localStorage.getItem(PAYMENT_CONFIRMATION_STORAGE_KEY) ?? "[]");
+    } catch {
+      savedApplications = [];
+      paymentOverrides = [];
+    }
+    window.localStorage.setItem(
+      SAVED_APPLICATIONS_STORAGE_KEY,
+      JSON.stringify([result.record, ...savedApplications.filter((item) => item.id !== result.record.id)]),
+    );
+    window.localStorage.setItem(
+      PAYMENT_CONFIRMATION_STORAGE_KEY,
+      JSON.stringify(mergePaymentConfirmationOverrides(paymentOverrides, result.override)),
+    );
+    setRecord(result.record);
+    setPaymentOverride(result.override);
+    setPaymentFields({
+      channel: result.override.channel,
+      payerName: result.override.payerName,
+      paymentDate: result.override.paymentDate,
+      amount: result.override.amount,
+      referenceNumber: result.override.referenceNumber,
+      gatewayStatus: result.override.gatewayStatus,
+      collectingOfficer: result.override.collectingOfficer,
+      notes: result.override.notes,
+    });
+  }
+
+  function commitPaymentAction(action: PaymentConfirmationAction) {
+    if (!record) return;
+    const result = applyPaymentConfirmation(
+      record,
+      treasurerOverride?.assessmentReference ?? `ASM-2026-${record.id.slice(-5)}`,
+      paymentOverride,
+      action,
+      paymentFields,
+    );
+    persistPaymentResult(result);
+    setPendingPaymentAction(null);
+    setPaymentError("");
+    setNotice(
+      action === "confirm"
+        ? result.record.paymentStatus === "Paid"
+          ? "Payment fully confirmed and routed to Mayor's Final Approval."
+          : "Partial payment confirmed; the remaining balance is still payable."
+        : action === "reject"
+          ? "Payment transaction rejected and retained in the audit ledger."
+          : "Payment verification note saved to the audit trail.",
+    );
+  }
+
+  function requestPaymentReversal(transactionId: string) {
+    const error = validatePaymentReversal(transactionId, reversalReason, paymentOverride?.transactions ?? []);
+    if (error) {
+      setPaymentError(error);
+      return;
+    }
+    setPaymentError("");
+    setPendingReversalTransactionId(transactionId);
+  }
+
+  function commitPaymentReversal() {
+    if (!record || !paymentOverride || !pendingReversalTransactionId) return;
+    const result = applyPaymentReversal(record, paymentOverride, pendingReversalTransactionId, reversalReason);
+    persistPaymentResult(result);
+    setPendingReversalTransactionId("");
+    setReversalReason("");
+    setPaymentError("");
+    setNotice("Confirmed payment reversed; Mayor approval is locked until the balance is settled again.");
+  }
+
   if (!loaded)
     return (
       <main className={styles.page}>
@@ -718,6 +869,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
     !terminal &&
     ["Approved", "Not applicable"].includes(reviews[3]?.status) &&
     !["Approved", "Not applicable"].includes(reviews[4]?.status);
+  const paymentConfirmationActive =
+    !terminal && reviews[4]?.status === "Approved" && ["Pending payment", "Reversed"].includes(record.paymentStatus);
+  const paymentWorkspaceVisible = paymentConfirmationActive || Boolean(paymentOverride?.transactions.length);
   const initials = record.businessName
     .split(" ")
     .slice(0, 2)
@@ -736,7 +890,9 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           <ArrowLeft size={14} /> Applications
         </Link>
         <div className={styles.activeReviewNotice}>
-          {treasurerReviewActive ? (
+          {paymentConfirmationActive ? (
+            <CreditCard size={14} />
+          ) : treasurerReviewActive ? (
             <Banknote size={14} />
           ) : fireReviewActive ? (
             <Flame size={14} />
@@ -747,17 +903,19 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
           ) : (
             <ShieldCheck size={14} />
           )}
-          {treasurerReviewActive
-            ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
-            : fireReviewActive
-              ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
-              : healthReviewActive
-                ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
-                : zoningReviewActive
-                  ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
-                  : bploReviewActive
-                    ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
-                    : `Current office · ${record.assignedOfficer}`}
+          {paymentConfirmationActive
+            ? `Payment confirmation active · ${PAYMENT_CONFIRMATION_ACTOR}`
+            : treasurerReviewActive
+              ? `Treasurer assessment active · ${TREASURER_ASSESSMENT_ACTOR}`
+              : fireReviewActive
+                ? `Fire review active · ${FIRE_REVIEW_ACTOR}`
+                : healthReviewActive
+                  ? `Health review active · ${HEALTH_REVIEW_ACTOR}`
+                  : zoningReviewActive
+                    ? `Zoning review active · ${ZONING_REVIEW_ACTOR}`
+                    : bploReviewActive
+                      ? `BPLO review active · ${BPLO_REVIEW_ACTOR}`
+                      : `Current office · ${record.assignedOfficer}`}
         </div>
       </div>
 
@@ -936,7 +1094,7 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                     (index === 1 && zoningReviewActive) ||
                     (index === 2 && healthReviewActive) ||
                     (index === 3 && fireReviewActive) ||
-                    (index === 4 && treasurerReviewActive)
+                    (index === 4 && (treasurerReviewActive || paymentConfirmationActive))
                       ? styles.activeReviewCard
                       : ""
                   }
@@ -1176,6 +1334,23 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
                       onAction={requestTreasurerAction}
                     />
                   ) : null}
+                  {index === 4 && paymentWorkspaceVisible ? (
+                    <PaymentConfirmationActions
+                      fields={paymentFields}
+                      assessmentAmount={record.assessmentAmount}
+                      transactions={paymentOverride?.transactions ?? []}
+                      summary={paymentSummary}
+                      error={paymentError}
+                      reversalReason={reversalReason}
+                      onFieldChange={updatePaymentField}
+                      onReversalReasonChange={(value) => {
+                        setReversalReason(value);
+                        setPaymentError("");
+                      }}
+                      onAction={requestPaymentAction}
+                      onReverse={requestPaymentReversal}
+                    />
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -1302,6 +1477,26 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
             ) : (
               <p className={styles.emptyText}>The Treasurer’s Office has not posted an assessment.</p>
             )}
+            {paymentOverride?.transactions.length ? (
+              <div className={styles.sidePaymentLedger}>
+                <header>
+                  <strong>Payment ledger</strong>
+                  <small>{formatPeso(paymentSummary.outstandingBalance, true)} outstanding</small>
+                </header>
+                {paymentOverride.transactions.toReversed().map((transaction) => (
+                  <article key={transaction.id}>
+                    <span>
+                      <strong>{transaction.officialReceiptNumber || transaction.referenceNumber}</strong>
+                      <small>{transaction.channel}</small>
+                    </span>
+                    <span>
+                      <strong>{formatPeso(transaction.amount, true)}</strong>
+                      <small>{transaction.status}</small>
+                    </span>
+                  </article>
+                ))}
+              </div>
+            ) : null}
           </section>
 
           <section className={styles.card}>
@@ -1472,6 +1667,36 @@ export function ApplicationDetailView({ applicationId }: { applicationId: string
         onConfirm={() => {
           if (pendingTreasurerAction) commitTreasurerAction(pendingTreasurerAction);
         }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingPaymentAction)}
+        onOpenChange={(open) => {
+          if (!open) setPendingPaymentAction(null);
+        }}
+        title={pendingPaymentAction === "confirm" ? "Confirm payment transaction?" : "Reject payment transaction?"}
+        description={
+          pendingPaymentAction === "confirm"
+            ? paymentFields.amount === paymentSummary.outstandingBalance
+              ? `This confirms ${formatPeso(paymentFields.amount, true)}, generates an official receipt, and routes the fully paid application to Mayor's Final Approval.`
+              : `This confirms a partial payment of ${formatPeso(paymentFields.amount, true)}. The application remains in Payment Confirmation until the balance is settled.`
+            : "This records the failed or rejected transaction in the payment ledger without reducing the outstanding balance."
+        }
+        confirmLabel={pendingPaymentAction === "confirm" ? "Confirm and issue receipt" : "Reject transaction"}
+        destructive={pendingPaymentAction === "reject"}
+        onConfirm={() => {
+          if (pendingPaymentAction) commitPaymentAction(pendingPaymentAction);
+        }}
+      />
+      <ConfirmationDialog
+        open={Boolean(pendingReversalTransactionId)}
+        onOpenChange={(open) => {
+          if (!open) setPendingReversalTransactionId("");
+        }}
+        title="Reverse confirmed payment?"
+        description="This voids the selected confirmed transaction, restores its amount to the outstanding balance, and locks Mayor approval until payment is settled again."
+        confirmLabel="Reverse payment"
+        destructive
+        onConfirm={commitPaymentReversal}
       />
     </main>
   );

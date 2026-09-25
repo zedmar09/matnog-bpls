@@ -1,12 +1,7 @@
 import type { ReactNode } from "react";
 
-import { BplsTopNavigation } from "@/features/bpls-shell/bpls-top-navigation";
+import { BplsShell } from "@/features/bpls-shell/bpls-shell";
 
 export default function Layout({ children }: { children: ReactNode }) {
-  return (
-    <>
-      <BplsTopNavigation />
-      {children}
-    </>
-  );
+  return <BplsShell>{children}</BplsShell>;
 }

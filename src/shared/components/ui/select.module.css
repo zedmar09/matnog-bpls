@@ -1,0 +1,89 @@
+.trigger {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 0 11px;
+  color: #333;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  outline: 0;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.trigger:hover {
+  background: #fafafa;
+  border-color: #ccc;
+}
+
+.trigger:focus-visible,
+.trigger[data-state="open"] {
+  border-color: #999;
+  box-shadow: 0 0 0 3px rgb(0 0 0 / 6%);
+}
+
+.chevron {
+  flex: none;
+  color: #888;
+}
+
+.content {
+  z-index: 80;
+  overflow: hidden;
+  min-width: var(--radix-select-trigger-width);
+  max-height: min(360px, var(--radix-select-content-available-height));
+  color: #333;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 12%);
+}
+
+.viewport {
+  padding: 5px;
+}
+
+.item {
+  position: relative;
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 7px 34px 7px 10px;
+  border-radius: 7px;
+  outline: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: default;
+  user-select: none;
+}
+
+.item[data-highlighted] {
+  color: #1a1a1a;
+  background: #f0f0f0;
+}
+
+.item[data-state="checked"] {
+  color: #1a1a1a;
+  font-weight: 500;
+}
+
+.indicator {
+  position: absolute;
+  right: 10px;
+  display: grid;
+  color: #1a1a1a;
+  place-items: center;
+}
+
+.scrollButton {
+  display: grid;
+  height: 28px;
+  color: #888;
+  background: #fff;
+  place-items: center;
+}

@@ -1,0 +1,290 @@
+.workspace {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
+}
+
+.queueCard,
+.computeCard,
+.summaryCard {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  box-shadow: 0 3px 15px rgb(0 0 0 / 5%);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #fafafa;
+  border-bottom: 1px solid #eee;
+}
+
+.panelHeader h3 {
+  margin: 0;
+  color: #1a1a1a;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.panelHeader p {
+  margin: 4px 0 0;
+  color: #888;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.queueList {
+  display: grid;
+  max-height: 660px;
+  overflow: auto;
+}
+
+.queueItem {
+  display: grid;
+  gap: 10px;
+  padding: 13px 16px;
+  text-align: left;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+}
+
+.queueItem:hover,
+.queueItemActive {
+  background: #fafafa;
+}
+
+.queueItemActive {
+  box-shadow: inset 3px 0 0 #1a1a1a;
+}
+
+.queueTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.queueName {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.queueName strong {
+  overflow: hidden;
+  color: #1a1a1a;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queueName span,
+.queueMeta span {
+  color: #888;
+  font-size: 11px;
+}
+
+.queueMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+
+.computeBody {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.businessStrip {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: linear-gradient(105deg, #f5f5f5, #fff 72%);
+  border: 1px solid #e6e6e6;
+  border-radius: 10px;
+  grid-template-columns: 1fr auto;
+}
+
+.businessStrip h2 {
+  margin: 0;
+  color: #1a1a1a;
+  font-size: 18px;
+  font-weight: 680;
+}
+
+.businessStrip p {
+  margin: 4px 0 0;
+  color: #777;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.miniStats {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.miniStats article {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 8px;
+}
+
+.miniStats span {
+  color: #888;
+  font-size: 10px;
+}
+
+.miniStats strong {
+  overflow: hidden;
+  color: #1a1a1a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feeTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.feeTable th {
+  height: 36px;
+  padding: 0 10px;
+  color: #888;
+  text-align: left;
+  background: #fafafa;
+  border-bottom: 1px solid #eee;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.feeTable td {
+  padding: 10px;
+  color: #333;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+  vertical-align: top;
+}
+
+.feeName {
+  display: grid;
+  gap: 3px;
+}
+
+.feeName strong {
+  color: #1a1a1a;
+  font-size: 12px;
+}
+
+.feeName small {
+  color: #888;
+  line-height: 1.35;
+}
+
+.amount {
+  color: #333;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.adjustmentGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field span {
+  color: #666;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  color: #333;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.field textarea {
+  min-height: 74px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.summaryGrid {
+  display: grid;
+  gap: 8px;
+}
+
+.summaryRow,
+.summaryTotal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #666;
+  font-size: 12px;
+}
+
+.summaryTotal {
+  padding-top: 10px;
+  margin-top: 4px;
+  color: #1a1a1a;
+  border-top: 1px solid #ddd;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 16px;
+  background: #fafafa;
+  border-top: 1px solid #eee;
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .queueList {
+    max-height: 420px;
+  }
+}
+
+@media (max-width: 720px) {
+  .businessStrip,
+  .miniStats,
+  .adjustmentGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,24 +1,33 @@
-import { BPLS_NAVIGATION } from "./navigation";
+import { HOME_ITEM, NAV_SECTIONS } from "./navigation";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("BPLS navigation contains the approved top-level modules", () => {
-  assert.deepEqual(
-    BPLS_NAVIGATION.map((item) => item.label),
-    ["Dashboard", "Applications", "Businesses", "Reviews", "Payments", "Permits", "Reports", "Administration"],
-  );
+test("home item points to dashboard", () => {
+  assert.equal(HOME_ITEM.label, "Home");
+  assert.equal(HOME_ITEM.path, "/");
+});
+
+test("navigation sections contain the core BPLS modules", () => {
+  const allLabels = NAV_SECTIONS.flatMap((section) => section.items.map((item) => item.label));
+  assert.deepEqual(allLabels, [
+    "Applications",
+    "Businesses",
+    "Assessment",
+    "Payments",
+    "Reviews",
+    "Permits",
+    "Compliance",
+  ]);
 });
 
 test("navigation destinations are unique and use internal absolute paths", () => {
-  const destinations = BPLS_NAVIGATION.flatMap((item) => [
-    item.href,
-    ...(item.children?.map((child) => child.href) ?? []),
-  ]);
+  const destinations = NAV_SECTIONS.flatMap((section) =>
+    section.items.flatMap((item) => item.children?.map((child) => child.path) ?? [item.path].filter(Boolean)),
+  );
 
-  for (const href of destinations) {
-    assert.match(href, /^\//);
+  for (const path of destinations) {
+    assert.match(path!, /^\//);
   }
 
-  const submenuDestinations = BPLS_NAVIGATION.flatMap((item) => item.children?.map((child) => child.href) ?? []);
-  assert.equal(new Set(submenuDestinations).size, submenuDestinations.length);
+  assert.equal(new Set(destinations).size, destinations.length);
 });
